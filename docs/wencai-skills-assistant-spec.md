@@ -1178,14 +1178,14 @@ Tab 固定为：
 约束：
 
 - assistant 主回复 `summary` 只在消息气泡中展示，右侧 `结果概览` 不得重复渲染同一段 `summary`。
-- `ResultSummary` 只承载补充信息：`user_visible_error`、`facts`、`judgements`。
+- `ResultSummary` 只承载补充信息：`user_visible_error`、`judgements`；右栏默认不再渲染 `facts`。
 - 优先卡片当前固定包括：
   - `operation_guidance`
   - `multi_horizon_analysis`
   - `portfolio_context`
   - 标题为 `财报与基本面` 的 `custom` 卡
 - 这些优先卡片必须先于普通 cards 展示。
-- 在 `卡片` 视图，若当前存在结构化 cards，右栏首屏应优先展示 `user_visible_error` 和结构化 cards；`facts/judgements` 应后置，不能把结构化卡片压到首屏以下。
+- 在 `卡片` 视图，若当前存在结构化 cards，右栏首屏应优先展示 `user_visible_error` 和结构化 cards；`judgements` 应后置，不能把结构化卡片压到首屏以下。
 - 表格和卡片切换按钮只在表格和普通 cards 两种视图都可用时出现；若当前只有一种视图，前端必须直接展示该视图，不能切到空白态。
 - 默认 `resultViewMode` 是 `table`。
 - `Skills` tab 使用最新 assistant 消息的 `skills_used`。
@@ -1196,7 +1196,7 @@ Tab 固定为：
 - 结果侧栏应允许显示最近一次“加入候选池”成功或失败反馈。
 - 聊天主链路若收到 `user_visible_error`，结果区或消息气泡里必须有稳定可见提示；Toast 只能作为补充，不能代替主界面状态。
 - `ResultSummary` 顶部必须优先展示当前 latest assistant 的 `user_visible_error`，并在 `retryable=true` 时明确显示“可重试”语义。
-- 若右侧当前没有错误提示、facts、judgements、优先卡片、普通卡片或表格，则显示 `暂无分析结果`；不能因为消息气泡已有主回复就再造一个重复摘要占位。
+- 若右侧当前没有错误提示、judgements、优先卡片、普通卡片或表格，则显示 `暂无分析结果`；不能因为消息气泡已有主回复就再造一个重复摘要占位。
 
 ### 7.6 ResultTable
 

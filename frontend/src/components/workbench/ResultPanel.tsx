@@ -57,7 +57,6 @@ export function ResultPanel() {
   const hasSecondaryCards = secondaryCards.length > 0;
   const hasOverviewContent = Boolean(
     latestUserVisibleError ||
-      currentResult?.facts?.length ||
       currentResult?.judgements?.length ||
       actionCards.length > 0 ||
       hasSecondaryCards ||
