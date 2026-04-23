@@ -120,6 +120,11 @@
 - 中栏：消息流 + 输入框
 - 右栏：结果概览 / Skills / 追问
 
+其中主回答文案以中栏 assistant 消息气泡为准，右栏 `结果概览` 只承载结构化补充信息，不重复渲染同一段 `summary`。
+对于单股固定卡型，右栏还应优先按 `metadata` 渲染成结构化指标卡，而不是继续把 `card.content` 原样堆成大段文字。
+当用户切到 `卡片` 视图时，右栏首屏应优先露出结构化 cards，本来作为补充信息的 `facts/judgements` 需要后置，避免把关键卡片压到滚动容器下半区。
+右栏 `追问` tab 里的 suggestion 属于直接执行入口，不是输入框草稿；点击后应直接复用聊天流式主链路发起下一轮 follow-up。
+
 这不是可随意改动的临时布局，而是后续所有体验优化的基本骨架。
 
 ### 4.3 状态划分
@@ -137,6 +142,8 @@ TanStack Query 负责：
 - `["templates"]`
 - `["watchlist"]`
 
+其中 `["watchlist"]` 还是结果表收藏态和候选池页面的统一真值来源；前端不能只靠局部组件 state 判断某只股票是否已入池。
+
 Zustand 负责：
 
 - 当前会话 id
@@ -144,6 +151,7 @@ Zustand 负责：
 - 输入框内容
 - streaming status
 - 当前结构化结果
+- 当前 assistant 占位消息上的实时 skill trace
 - 左右面板和 tab 状态
 
 原则：
@@ -171,6 +179,8 @@ Zustand 负责：
 | `backend/app/main.py` | FastAPI 入口、路由层 |
 | `backend/app/schemas/*.py` | Pydantic 契约模型 |
 | `backend/app/services/chat_engine.py` | 模式识别、路由、结果生成主链路 |
+| `backend/app/services/skill_registry.py` | 运行时 skill 元数据注册表，维护 `skill_id -> adapter_kind` |
+| `backend/app/services/skill_adapters.py` | 运行时 skill adapter 层，隔离问财 / 搜索 / 本地行情调用 |
 | `backend/app/services/openai_client.py` | GPT 分析增强和 OpenAI 兼容请求 |
 | `backend/app/services/llm_manager.py` | LLM provider 注册、链路管理、失败切换 |
 | `backend/app/services/llm_account_pool.py` | LLM 账号池 adapter factory、账号级轮询和失败切换 |
@@ -206,6 +216,7 @@ Zustand 负责：
 - `build_route()`：技能路由
 - `execute_plan()`：逐步执行技能计划
 - `result_to_chat_response()`：把结构化结果包装成 `ChatResponse`
+- 结果聚合、主表选择、卡片生成和失败兜底
 - 单股咨询分支：
   - `_extract_security_subject()`
   - `_is_entry_price_question()`
@@ -213,6 +224,32 @@ Zustand 负责：
   - `_single_security_action_card()`
   - `_multi_horizon_analysis_card()`
   - `_extract_technical_snapshot()`
+
+`_extract_security_subject()` 当前还承担单股口语的预清洗职责：在正则提取前先移除问句中的空白字符，避免 `帮我看 北方稀土 的 k线和财报` 这类问法被错解析成 `k线和`、`行业和` 之类主题词。
+
+单股问财模板已拆成更窄的子查询阶段：
+
+- `个股价格量能`
+- `个股技术指标`
+- `个股行业题材`
+- `财报核心指标`
+- `估值现金流补充`
+
+这些阶段在 runtime 上仍复用 `wencai.single_security_snapshot` / `wencai.single_security_fundamental` 两个 skill_id，但通过不同 `SkillPlan.name + query` 拆开执行，再在 `execute_plan()` 内合并成同一条单股主结果。
+
+`skill_registry.py` 负责：
+
+- 维护 `skill_id -> SkillSpec`
+- 为每个运行时 skill 声明展示名、`adapter_kind`、默认 search channel、可选 `asset_path`
+- 若 `asset_path/_meta.json` 存在，则 best-effort 吸收 `slug`、`version`、`ownerId`、`publishedAt` 这类静态安装元数据
+- 为 `/api/meta/status` 提供 runtime skill 元数据，供设置页展示已安装版本
+- 作为后端 runtime source of truth；`skills/` 目录只是安装资产目录，不直接驱动后端执行
+
+`skill_adapters.py` 负责：
+
+- 按 `adapter_kind` 封装问财 query、问财综合搜索、本地行情快照、本地盘口、本地题材补充
+- 把外部调用细节和耗时采集从 `chat_engine.py` 中抽离
+- 保持 `execute_plan()` 的主职责仍是“编排和结果聚合”，而不是“了解每一种 skill 怎么调”
 
 `openai_client.py` 负责：
 
@@ -300,15 +337,30 @@ Zustand 负责：
 -> repository.ensure_session()
 -> repository.add_message(user)
 -> chat_engine.execute_plan()
--> 如已启用 GPT，则 openai_client 做文案增强
--> repository.add_message(assistant + result_snapshot)
--> 返回 ChatResponse 或 SSE completed
+-> 非流式：在 LangGraph 内完成规则执行 + GPT 增强，再写入 assistant
+-> 流式：先消费 LangGraph `call_skills` 阶段结果
+      -> 先返回 `partial_result` + `completed`
+      -> repository.add_message(assistant + result_snapshot)
+      -> 再 best-effort 执行 LangGraph `llm_enhance`
+      -> 若增强结果有变化，则 repository.update_message(assistant) 并补发 `result_enhanced`
+-> 若本轮存在可展示 fallback，但外部技能实际失败：
+      -> completed ChatResponse / SSE completed 仍返回结构化结果
+      -> 同时挂 `user_visible_error`
+      -> 这类 completed 降级提示前端应按 warning 语义展示，而不是和 failed 共用 error 态
+      -> 前端在消息气泡和结果概览顶部稳定展示该提示，Toast 只做补充提醒
+-> 若主链路发生未兜住异常：
+      -> repository.add_message(assistant failed)
+      -> 返回 ChatResponse.failed 或 SSE failed
 ```
 
 当前支持两种响应形态：
 
 - 非流式 JSON
 - SSE 流式事件
+
+流式链路新增一个可选补丁事件：
+
+- `result_enhanced`：`completed` 之后才可能出现，表示 GPT 增强在基础结果返回后又产出了更好的 summary / judgements / follow_ups；前端需要就地更新当前 assistant 消息，而不是新增一条消息。
 
 ### 6.1.1 候选池动作链路
 
@@ -320,6 +372,7 @@ Zustand 负责：
 -> repository.find_watch_item_by_symbol() 去重
 -> repository.create_watch_item() 写入候选池
 -> assistant 返回候选池更新结果
+-> 前端以 `["watchlist"]` 刷新后的真实数据驱动星标收藏态，而不是用本地 toggle 假设成功
 ```
 
 ### 6.2 追问 / 比较链路
@@ -329,15 +382,27 @@ Zustand 负责：
 -> ChatComposer 判断走 /api/chat/follow-up
 -> 后端读取 parent_message_id 对应消息
 -> 若缺失则回退该 session 最新 assistant 消息
--> compare_from_snapshot()
--> 写入 user / assistant 消息
--> 返回 follow_up 或 compare 结果
+-> 若是“比较 / 对比 / 打分”类问法：
+      -> compare_from_snapshot()
+      -> 写入 user / assistant 消息
+      -> 返回 compare 结果
+-> 若是“只保留 / 去掉 / 按风险排序 / 按财务质量排序 / 趋势更稳”这类本地过滤或排序问法，且父结果表字段足够：
+      -> 基于 parent.result_snapshot.table 做本地 refinement
+      -> 写入 user / assistant 消息
+      -> 返回 follow_up 结果
+-> 否则：
+      -> 基于 parent.result_snapshot / rewritten_query 做上下文继承
+      -> detect_mode() / build_route() / execute_plan()
+      -> 流式下先返回基础结果，再补 `result_enhanced`
+      -> 写入或更新 user / assistant 消息
+      -> 返回 follow_up 结果
 ```
 
 当前设计重点：
 
-- 优先复用 `result_snapshot`
-- 避免每次追问都重查外部数据
+- 比较优先复用 `result_snapshot`
+- 过滤 / 排序类追问优先复用上一轮表格已有字段，避免不必要的外部重查
+- 真正需要补公告、新闻、财务或单股细节时，再继承上一轮主体、筛选条件和模式做重路由
 
 ### 6.3 关闭会话链路
 
@@ -365,7 +430,7 @@ Zustand 负责：
 用户问“东阳光建议多少价格买入”
 -> detect_mode() 识别为单股短线问题
 -> build_route() 走 single security route
--> execute_plan() 获取个股快照、K 线、均线和技术指标，并补充新闻/公告
+-> execute_plan() 依次获取个股价格量能、个股技术指标、个股行业题材、财报核心指标、估值现金流补充，并补充新闻/公告
 -> _single_security_action_card() 计算 observe_low / observe_high / stop_price
 -> _multi_horizon_analysis_card() 生成短线 / 中线 / 长线三周期分析
 -> openai_client 在不改价格位的前提下润色 summary / card content
@@ -381,11 +446,11 @@ Zustand 负责：
 用户问“翠微股份今天怎么持仓”
 -> detect_mode() 识别为单股短线 + holding_context_focus
 -> build_route() 走 single security route
--> execute_plan() 获取个股快照、新闻、公告
+-> execute_plan() 获取单股问财拆分查询、新闻、公告
 -> execute_plan() 再读取模拟炒股持仓上下文
 -> 若命中该股持仓，则把数量、成本、浮盈亏、账户仓位拼进 summary / facts / judgements
 -> 返回 operation_guidance + portfolio_context 两张卡
--> 若模拟炒股失败，则降级为仅个股快照建议
+-> 若模拟炒股失败，则降级为仅单股问财 + 本地行情建议
 ```
 
 ### 6.6 GPT 强度决策链路
