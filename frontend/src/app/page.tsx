@@ -42,7 +42,7 @@ export default function WorkbenchPage() {
       {/* Right Panel - Results */}
       <div
         className={cn(
-          "w-[400px] flex flex-col transition-all",
+          "w-[480px] flex flex-col transition-all",
           rightPanelCollapsed && "w-0 overflow-hidden border-0"
         )}
       >
