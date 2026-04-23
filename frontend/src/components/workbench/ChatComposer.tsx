@@ -1,15 +1,11 @@
 "use client";
 
-import { useState, useRef, useCallback, KeyboardEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useRef, useCallback, KeyboardEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { ModeChips } from "./ModeChips";
 import { useChatStore } from "@/stores/chatStore";
-import { useChatStream } from "@/hooks/useChatStream";
-import type { ChatFollowUpRequest, ChatRequest } from "@/types/chat";
-
-const FOLLOW_UP_KEYWORDS = ["刚才", "上面", "这几只", "那几只", "比较", "对比", "排序", "打分"];
+import { useChatSubmit } from "@/hooks/useChatSubmit";
 
 const QUICK_TEMPLATES = [
   { label: "短线选股", query: "今天适合做什么方向？给我 5 只短线观察股" },
@@ -18,75 +14,14 @@ const QUICK_TEMPLATES = [
 ];
 
 export function ChatComposer() {
-  const [isLoading, setIsLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const queryClient = useQueryClient();
+  const { isSubmitting, submitMessage } = useChatSubmit();
 
-  const {
-    inputValue,
-    setInputValue,
-    currentSessionId,
-    modeHint,
-    messages,
-    currentResult,
-  } = useChatStore();
-
-  const { sendChat, sendFollowUp } = useChatStream({
-    onComplete: (response) => {
-      queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      queryClient.invalidateQueries({ queryKey: ["session", response.session_id] });
-      setIsLoading(false);
-    },
-    onError: () => setIsLoading(false),
-  });
-
-  const latestAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
+  const { inputValue, setInputValue } = useChatStore();
 
   const handleSubmit = useCallback(async () => {
-    if (!inputValue.trim() || isLoading) return;
-
-    const message = inputValue.trim();
-    const isSuggestedFollowUp = currentResult?.follow_ups?.includes(message) ?? false;
-    const shouldUseFollowUp =
-      !!currentSessionId &&
-      !!latestAssistantMessage &&
-      (isSuggestedFollowUp || FOLLOW_UP_KEYWORDS.some((k) => message.includes(k)));
-
-    setInputValue("");
-    setIsLoading(true);
-
-    try {
-      if (shouldUseFollowUp && latestAssistantMessage) {
-        const request: ChatFollowUpRequest = {
-          session_id: currentSessionId!,
-          parent_message_id: latestAssistantMessage.id,
-          message,
-          stream: true,
-        };
-        await sendFollowUp(request);
-      } else {
-        const request: ChatRequest = {
-          session_id: currentSessionId,
-          message,
-          mode_hint: modeHint,
-          stream: true,
-        };
-        await sendChat(request);
-      }
-    } catch {
-      setIsLoading(false);
-    }
-  }, [
-    currentResult?.follow_ups,
-    currentSessionId,
-    inputValue,
-    isLoading,
-    latestAssistantMessage,
-    modeHint,
-    sendChat,
-    sendFollowUp,
-    setInputValue,
-  ]);
+    await submitMessage(inputValue);
+  }, [inputValue, submitMessage]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -112,15 +47,15 @@ export function ChatComposer() {
             onKeyDown={handleKeyDown}
             placeholder="输入你的问题，例如：我目前持有通富微电，今天该怎么看持仓和财报？"
             className="min-h-[72px] max-h-[180px] resize-none border-0 bg-transparent p-2 text-[15px] leading-7 shadow-none focus:ring-0 focus:shadow-none"
-            disabled={isLoading}
+            disabled={isSubmitting}
           />
           <Button
-            onClick={handleSubmit}
-            disabled={!inputValue.trim() || isLoading}
+            onClick={() => void handleSubmit()}
+            disabled={!inputValue.trim() || isSubmitting}
             className="h-auto self-end rounded-2xl px-6 shadow-glow"
             size="lg"
           >
-            {isLoading ? (
+            {isSubmitting ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                 <span className="text-xs">分析中</span>
@@ -139,7 +74,7 @@ export function ChatComposer() {
             <button
               key={tpl.label}
               onClick={() => setInputValue(tpl.query)}
-              disabled={isLoading}
+              disabled={isSubmitting}
               className="rounded-full border border-transparent bg-muted/50 px-3.5 py-1.5 text-[12px] text-muted-foreground transition-all duration-200 hover:border-primary/20 hover:bg-primary/10 hover:text-primary disabled:opacity-50"
             >
               {tpl.label}

@@ -1,7 +1,26 @@
+export interface SkillAssetMetaStatus {
+  slug: string | null;
+  version: string | null;
+  owner_id: string | null;
+  published_at: number | null;
+  meta_path: string | null;
+}
+
+export interface RuntimeSkillStatus {
+  skill_id: string;
+  display_name: string;
+  adapter_kind: string;
+  default_channel: string | null;
+  asset_path: string | null;
+  asset_meta: SkillAssetMetaStatus | null;
+  enabled: boolean;
+}
+
 export interface EnvironmentStatus {
   api_base_url: string;
   api_key_configured: boolean;
   skill_count: number;
+  runtime_skills: RuntimeSkillStatus[];
   llm_chain_mode: string;
   llm_agent_runtime: string;
   llm_enabled: boolean;

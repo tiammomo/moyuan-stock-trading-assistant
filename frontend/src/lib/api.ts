@@ -1,3 +1,5 @@
+import { extractApiErrorMessage } from "./apiError";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function fetchApi<T>(
@@ -14,8 +16,8 @@ async function fetchApi<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    const payload = await response.json().catch(() => ({ detail: "Request failed" }));
+    throw new Error(extractApiErrorMessage(payload) || `HTTP ${response.status}`);
   }
 
   return response.json();

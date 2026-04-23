@@ -11,8 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { useState } from "react";
 import { Input } from "@/components/ui/Input";
-import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/utils";
+import { cn, normalizeStockSymbol } from "@/lib/utils";
 import type { ResultTable as ResultTableType, JsonValue } from "@/types/common";
 
 const columnHelper = createColumnHelper<Record<string, JsonValue>>();
@@ -21,12 +20,12 @@ interface ResultTableProps {
   table: ResultTableType | null;
   onRowClick?: (row: Record<string, JsonValue>) => void;
   onFavorite?: (row: Record<string, JsonValue>) => void;
+  favoriteSymbols?: Set<string>;
 }
 
-export function ResultTable({ table, onRowClick, onFavorite }: ResultTableProps) {
+export function ResultTable({ table, onRowClick, onFavorite, favoriteSymbols }: ResultTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
-  const [favoritedRows, setFavoritedRows] = useState<Set<number>>(new Set());
 
   if (!table || table.rows.length === 0) {
     return (
@@ -69,17 +68,6 @@ export function ResultTable({ table, onRowClick, onFavorite }: ResultTableProps)
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
-
-  const handleFavorite = (rowIndex: number, row: Record<string, JsonValue>) => {
-    const newSet = new Set(favoritedRows);
-    if (newSet.has(rowIndex)) {
-      newSet.delete(rowIndex);
-    } else {
-      newSet.add(rowIndex);
-      onFavorite?.(row);
-    }
-    setFavoritedRows(newSet);
-  };
 
   return (
     <div className="space-y-3">
@@ -125,7 +113,8 @@ export function ResultTable({ table, onRowClick, onFavorite }: ResultTableProps)
             </thead>
             <tbody>
               {tableInstance.getRowModel().rows.map((row, rowIndex) => {
-                const isFavorited = favoritedRows.has(rowIndex);
+                const symbol = normalizeStockSymbol(String(row.original["代码"] || ""));
+                const isFavorited = Boolean(symbol && favoriteSymbols?.has(symbol));
                 const isEven = rowIndex % 2 === 0;
 
                 return (
@@ -147,7 +136,7 @@ export function ResultTable({ table, onRowClick, onFavorite }: ResultTableProps)
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleFavorite(rowIndex, row.original);
+                          onFavorite?.(row.original);
                         }}
                         className={cn(
                           "w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all duration-200",

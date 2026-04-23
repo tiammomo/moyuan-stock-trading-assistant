@@ -32,6 +32,17 @@ export function formatLatency(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+export function normalizeStockSymbol(value: string | null | undefined): string {
+  const text = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!text) return "";
+  if (/^\d{6}\.(SH|SZ|BJ)$/.test(text)) return text;
+  if (!/^\d{6}$/.test(text)) return text;
+  if (/^(60|68|90)/.test(text)) return `${text}.SH`;
+  if (/^(00|20|30)/.test(text)) return `${text}.SZ`;
+  if (/^(43|83|87|88|92|8)/.test(text)) return `${text}.BJ`;
+  return text;
+}
+
 export const MODE_LABELS: Record<string, string> = {
   short_term: "短线",
   swing: "波段",

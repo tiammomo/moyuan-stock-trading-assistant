@@ -37,6 +37,7 @@ export type StreamEventType =
   | "skill_finished"
   | "partial_result"
   | "completed"
+  | "result_enhanced"
   | "failed";
 
 export type CardType =
@@ -58,6 +59,16 @@ export type WatchBucket =
   | "discard";
 
 export type GptReasoningPolicy = "auto" | "medium" | "high" | "xhigh";
+
+export type UserVisibleErrorSeverity = "warning" | "error";
+
+export interface UserVisibleError {
+  code: string;
+  severity: UserVisibleErrorSeverity;
+  title: string;
+  message: string;
+  retryable: boolean;
+}
 
 export interface SkillUsage {
   name: string;

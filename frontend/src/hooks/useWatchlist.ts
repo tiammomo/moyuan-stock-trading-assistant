@@ -55,6 +55,7 @@ export function useWatchlist() {
     updateItem: updateMutation.mutate,
     updateItemAsync: updateMutation.mutateAsync,
     deleteItem: deleteMutation.mutate,
+    deleteItemAsync: deleteMutation.mutateAsync,
     resolveStock: resolveMutation.mutate,
     resolveStockAsync: resolveMutation.mutateAsync,
     isCreating: createMutation.isPending,

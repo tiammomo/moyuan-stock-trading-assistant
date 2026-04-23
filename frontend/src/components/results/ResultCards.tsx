@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { cn, CARD_TYPE_LABELS } from "@/lib/utils";
+import { StructuredResultCardContent } from "@/components/results/StructuredResultCardContent";
 import type { ResultCard as ResultCardType } from "@/types/common";
 
 interface ResultCardsProps {
@@ -41,10 +42,10 @@ export function ResultCards({ cards }: ResultCardsProps) {
       {cards.map((card, idx) => {
         const style = resolveCardStyle(card);
         return (
-          <Card key={idx} className={cn("border", style.bg)}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <span>{style.icon}</span>
+            <Card key={idx} className={cn("border", style.bg)}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <span>{style.icon}</span>
                 {card.title}
                 <span className="text-xs font-normal text-muted-foreground ml-auto">
                   {CARD_TYPE_LABELS[card.type] || card.type}
@@ -52,7 +53,7 @@ export function ResultCards({ cards }: ResultCardsProps) {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm whitespace-pre-wrap">{card.content}</p>
+              <StructuredResultCardContent card={card} />
             </CardContent>
           </Card>
         );

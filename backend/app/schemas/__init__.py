@@ -12,9 +12,11 @@ from .common import (
     SourceRef,
     StreamEventType,
     StructuredResult,
+    UserVisibleError,
+    UserVisibleErrorSeverity,
     WatchBucket,
 )
-from .meta import EnvironmentStatus
+from .meta import EnvironmentStatus, RuntimeSkillStatus, SkillAssetMetaStatus
 from .profile import UserProfile, UserProfileUpdate
 from .session import ChatMessageRecord, SessionDetail, SessionSummary
 from .template import TemplateCreate, TemplateRecord, TemplateUpdate
@@ -34,15 +36,19 @@ __all__ = [
     "GptReasoningPolicy",
     "ResultCard",
     "ResultTable",
+    "RuntimeSkillStatus",
     "SessionDetail",
     "SessionSummary",
     "SkillRunStatus",
     "SkillStrategy",
     "SkillUsage",
+    "SkillAssetMetaStatus",
     "SourceRef",
     "StreamEvent",
     "StreamEventType",
     "StructuredResult",
+    "UserVisibleError",
+    "UserVisibleErrorSeverity",
     "TemplateCreate",
     "TemplateRecord",
     "TemplateUpdate",

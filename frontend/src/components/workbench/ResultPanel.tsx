@@ -4,13 +4,15 @@ import { useState } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { useUIStore } from "@/stores/uiStore";
 import { useWatchlist } from "@/hooks/useWatchlist";
-import { cn } from "@/lib/utils";
+import { cn, normalizeStockSymbol } from "@/lib/utils";
 import { ResultTable } from "@/components/results/ResultTable";
 import { ResultCards } from "@/components/results/ResultCards";
 import { ResultSummary } from "@/components/results/ResultSummary";
+import { UserVisibleErrorNotice } from "@/components/ui/UserVisibleErrorNotice";
 import { SkillTracePanel } from "./SkillTracePanel";
 import { FollowUpSuggestions } from "./FollowUpSuggestions";
 import { Button } from "@/components/ui/Button";
+import { toast } from "@/components/ui/Toast";
 import type { JsonValue, ChatMode } from "@/types/common";
 import type { WatchBucket } from "@/types/common";
 
@@ -25,13 +27,15 @@ const TAB_CONFIG: Record<Tab, { label: string; icon: string }> = {
 export function ResultPanel() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [watchlistFeedback, setWatchlistFeedback] = useState<string | null>(null);
-  const { currentResult, partialSummary, streamingStatus, messages } = useChatStore();
+  const { currentResult, streamingStatus, messages } = useChatStore();
   const { resultViewMode, setResultViewMode } = useUIStore();
-  const { createItemAsync } = useWatchlist();
+  const { watchlist, createItemAsync } = useWatchlist();
 
   const latestAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
+  const latestUserVisibleError = latestAssistantMessage?.user_visible_error ?? null;
   const skills = latestAssistantMessage?.skills_used || [];
   const followUps = currentResult?.follow_ups || [];
+  const favoriteSymbols = new Set(watchlist.map((item) => normalizeStockSymbol(item.symbol)));
 
   const tabs: Tab[] = ["overview", "skills", "followups"];
   const tabCounts = {
@@ -49,13 +53,36 @@ export function ResultPanel() {
     currentResult?.cards?.filter(
       (card) => !(priorityCardTypes.has(card.type) || card.title === "财报与基本面")
     ) || [];
-  const hasResult = currentResult || partialSummary;
+  const hasTable = Boolean(currentResult?.table);
+  const hasSecondaryCards = secondaryCards.length > 0;
+  const hasOverviewContent = Boolean(
+    latestUserVisibleError ||
+      currentResult?.facts?.length ||
+      currentResult?.judgements?.length ||
+      actionCards.length > 0 ||
+      hasSecondaryCards ||
+      hasTable
+  );
+  const hasSwitchableResultView = hasTable && hasSecondaryCards;
+  const showStructuredCardsFirst =
+    resultViewMode === "cards" || (!hasTable && (actionCards.length > 0 || hasSecondaryCards));
 
   const handleFavorite = async (row: Record<string, JsonValue>) => {
     const symbol = String(row["代码"] || "").trim();
     const name = String(row["名称"] || "").trim();
     if (!symbol || !name || symbol === "-" || name === "-") {
       setWatchlistFeedback("当前这一行没有可加入候选池的股票代码或名称");
+      toast.warning("当前这一行没有可加入候选池的股票代码或名称");
+      return;
+    }
+    const normalizedSymbol = normalizeStockSymbol(symbol);
+    const existingItem = watchlist.find(
+      (item) => normalizeStockSymbol(item.symbol) === normalizedSymbol
+    );
+    if (existingItem) {
+      const message = `${name}（${existingItem.symbol}）已在候选池中`;
+      setWatchlistFeedback(`ℹ ${message}`);
+      toast.info(message);
       return;
     }
     try {
@@ -68,8 +95,16 @@ export function ResultPanel() {
         source_session_id: latestAssistantMessage?.session_id || null,
       });
       setWatchlistFeedback(`✅ 已加入候选池：${name}（${symbol}）`);
+      toast.success(`已加入候选池：${name}（${normalizedSymbol || symbol}）`);
     } catch (error) {
-      setWatchlistFeedback(`❌ ${error instanceof Error ? error.message : "加入候选池失败"}`);
+      const message = error instanceof Error ? error.message : "加入候选池失败";
+      if (message.includes("已在候选池中")) {
+        setWatchlistFeedback(`ℹ ${message}`);
+        toast.info(message);
+        return;
+      }
+      setWatchlistFeedback(`❌ ${message}`);
+      toast.error(message);
     }
   };
 
@@ -113,7 +148,7 @@ export function ResultPanel() {
           </div>
 
           {/* View Toggle */}
-          {activeTab === "overview" && hasResult && (
+          {activeTab === "overview" && hasSwitchableResultView && (
             <div className="flex gap-1">
               {(["table", "cards"] as const).map((mode) => (
                 <button
@@ -142,7 +177,9 @@ export function ResultPanel() {
               "rounded-xl border px-3 py-2.5 text-xs font-medium animate-slide-up",
               watchlistFeedback.includes("✅")
                 ? "bg-green-50/80 border-green-200/50 text-green-700"
-                : "bg-red-50/80 border-red-200/50 text-red-700"
+                : watchlistFeedback.startsWith("ℹ")
+                  ? "bg-blue-50/80 border-blue-200/50 text-blue-700"
+                  : "bg-red-50/80 border-red-200/50 text-red-700"
             )}
           >
             {watchlistFeedback}
@@ -151,18 +188,34 @@ export function ResultPanel() {
 
         {activeTab === "overview" && (
           <>
-            <ResultSummary result={currentResult} partialSummary={partialSummary} />
-            {actionCards.length > 0 && <ResultCards cards={actionCards} />}
-            {resultViewMode === "table" && currentResult?.table && (
-              <ResultTable table={currentResult.table} onFavorite={(row) => void handleFavorite(row)} />
-            )}
-            {resultViewMode === "cards" && secondaryCards.length > 0 && (
-              <ResultCards cards={secondaryCards} />
+            {hasOverviewContent ? (
+              showStructuredCardsFirst ? (
+                <>
+                  {latestUserVisibleError && <UserVisibleErrorNotice error={latestUserVisibleError} />}
+                  {actionCards.length > 0 && <ResultCards cards={actionCards} />}
+                  {hasSecondaryCards && <ResultCards cards={secondaryCards} />}
+                  <ResultSummary result={currentResult} userVisibleError={null} />
+                </>
+              ) : (
+                <>
+                  <ResultSummary result={currentResult} userVisibleError={latestUserVisibleError} />
+                  {actionCards.length > 0 && <ResultCards cards={actionCards} />}
+                {resultViewMode === "table" && hasTable && (
+                  <ResultTable
+                    table={currentResult!.table}
+                    onFavorite={(row) => void handleFavorite(row)}
+                    favoriteSymbols={favoriteSymbols}
+                  />
+                )}
+              </>
+            )
+          ) : (
+              <div className="py-8 text-center text-sm text-muted-foreground">暂无分析结果</div>
             )}
           </>
         )}
 
-        {activeTab === "skills" && <SkillTracePanel skills={skills} />}
+        {activeTab === "skills" && <SkillTracePanel skills={skills} status={streamingStatus} />}
         {activeTab === "followups" && (
           <FollowUpSuggestions suggestions={followUps} onSuggestionClick={() => setActiveTab("overview")} />
         )}

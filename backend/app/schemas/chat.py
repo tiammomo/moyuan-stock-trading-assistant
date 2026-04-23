@@ -13,6 +13,7 @@ from .common import (
     SourceRef,
     StructuredResult,
     StreamEvent,
+    UserVisibleError,
 )
 
 
@@ -51,6 +52,7 @@ class ChatResponse(ContractModel):
     follow_ups: List[str] = Field(default_factory=list)
     sources: List[SourceRef] = Field(default_factory=list)
     status: ChatResponseStatus
+    user_visible_error: Optional[UserVisibleError] = None
 
 
 class SkillExecutionResult(ContractModel):

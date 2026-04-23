@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { useChatStore } from "@/stores/chatStore";
+import { useChatSubmit } from "@/hooks/useChatSubmit";
 
 interface FollowUpSuggestionsProps {
   suggestions: string[];
@@ -12,13 +13,22 @@ export function FollowUpSuggestions({
   suggestions,
   onSuggestionClick,
 }: FollowUpSuggestionsProps) {
-  const { setInputValue } = useChatStore();
+  const [pendingSuggestion, setPendingSuggestion] = useState<string | null>(null);
+  const { isSubmitting, submitMessage } = useChatSubmit();
+
+  useEffect(() => {
+    if (!isSubmitting) {
+      setPendingSuggestion(null);
+    }
+  }, [isSubmitting]);
 
   if (suggestions.length === 0) return null;
 
-  const handleClick = (suggestion: string) => {
-    setInputValue(suggestion);
+  const handleClick = async (suggestion: string) => {
+    if (isSubmitting) return;
+    setPendingSuggestion(suggestion);
     onSuggestionClick?.(suggestion);
+    await submitMessage(suggestion, { preferFollowUp: true });
   };
 
   return (
@@ -30,17 +40,22 @@ export function FollowUpSuggestions({
         {suggestions.map((suggestion, idx) => (
           <button
             key={idx}
-            onClick={() => handleClick(suggestion)}
+            onClick={() => void handleClick(suggestion)}
+            disabled={isSubmitting}
             className={cn(
               "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-left",
               "bg-muted/30 border border-border/30 hover:border-primary/30",
               "hover:bg-primary/5 hover:shadow-glow transition-all group",
-              "font-mono text-xs"
+              "font-mono text-xs disabled:cursor-not-allowed disabled:opacity-70"
             )}
           >
-            <span className="text-primary/60 group-hover:text-primary transition-colors">
-              ▸
-            </span>
+            {pendingSuggestion === suggestion ? (
+              <span className="h-3.5 w-3.5 rounded-full border border-primary/40 border-t-primary animate-spin" />
+            ) : (
+              <span className="text-primary/60 group-hover:text-primary transition-colors">
+                ▸
+              </span>
+            )}
             <span className="text-muted-foreground/80 group-hover:text-foreground transition-colors">
               {suggestion}
             </span>

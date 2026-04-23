@@ -1,6 +1,17 @@
 import { create } from "zustand";
-import type { ChatMessageRecord, ChatResponse, ChatMode, StructuredResult } from "@/types";
+import type {
+  ChatMessageRecord,
+  ChatResponse,
+  ChatMode,
+  StructuredResult,
+  SkillUsage,
+} from "@/types";
 import type { ChatResponseStatus } from "@/types/common";
+
+type LatestAssistantMessagePatch = Omit<Partial<ChatMessageRecord>, "result_snapshot" | "skills_used"> & {
+  skills_used?: SkillUsage[];
+  result_snapshot?: Partial<StructuredResult> | null;
+};
 
 interface ChatState {
   currentSessionId: string | null;
@@ -21,9 +32,37 @@ interface ChatState {
   setPartialSummary: (summary: string) => void;
   setMessages: (messages: ChatMessageRecord[]) => void;
   addMessage: (message: ChatMessageRecord) => void;
+  patchLatestAssistantMessage: (patch: LatestAssistantMessagePatch) => void;
   updateLatestAssistantMessage: (result: ChatResponse) => void;
   clearMessages: () => void;
   reset: () => void;
+}
+
+function findLatestAssistantIndex(messages: ChatMessageRecord[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "assistant") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function mergeStructuredResult(
+  current: StructuredResult | null | undefined,
+  patch: Partial<StructuredResult> | null | undefined
+): StructuredResult | null | undefined {
+  if (patch === undefined) return current;
+  if (patch === null) return null;
+
+  return {
+    summary: patch.summary ?? current?.summary ?? "",
+    table: patch.table ?? current?.table ?? null,
+    cards: patch.cards ?? current?.cards ?? [],
+    facts: patch.facts ?? current?.facts ?? [],
+    judgements: patch.judgements ?? current?.judgements ?? [],
+    follow_ups: patch.follow_ups ?? current?.follow_ups ?? [],
+    sources: patch.sources ?? current?.sources ?? [],
+  };
 }
 
 const initialState = {
@@ -62,14 +101,32 @@ export const useChatStore = create<ChatState>((set) => ({
   addMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
 
+  patchLatestAssistantMessage: (patch) =>
+    set((state) => {
+      const messages = [...state.messages];
+      const assistantIndex = findLatestAssistantIndex(messages);
+      if (assistantIndex === -1) return state;
+
+      const currentMessage = messages[assistantIndex];
+      const { result_snapshot: resultSnapshotPatch, ...messagePatch } = patch;
+      const nextResultSnapshot = mergeStructuredResult(currentMessage.result_snapshot, resultSnapshotPatch);
+
+      messages[assistantIndex] = {
+        ...currentMessage,
+        ...messagePatch,
+        result_snapshot: nextResultSnapshot,
+      };
+
+      return {
+        messages,
+        currentResult: resultSnapshotPatch !== undefined ? nextResultSnapshot ?? null : state.currentResult,
+      };
+    }),
+
   updateLatestAssistantMessage: (result) =>
     set((state) => {
       const messages = [...state.messages];
-      const assistantIndex = [...messages]
-        .reverse()
-        .findIndex((message) => message.role === "assistant");
-      const resolvedAssistantIndex =
-        assistantIndex === -1 ? -1 : messages.length - 1 - assistantIndex;
+      const resolvedAssistantIndex = findLatestAssistantIndex(messages);
 
       if (resolvedAssistantIndex >= 0) {
         messages[resolvedAssistantIndex] = {
@@ -89,6 +146,7 @@ export const useChatStore = create<ChatState>((set) => ({
           },
           skills_used: result.skills_used,
           status: result.status,
+          user_visible_error: result.user_visible_error,
         };
 
         for (let i = resolvedAssistantIndex - 1; i >= 0; i -= 1) {

@@ -223,6 +223,7 @@ class Repository:
             "skills_used": data.get("skills_used", []),
             "result_snapshot": data.get("result_snapshot"),
             "status": data.get("status"),
+            "user_visible_error": data.get("user_visible_error"),
             "created_at": data.get("created_at") or utc_now_iso(),
         }
 
@@ -239,6 +240,25 @@ class Repository:
             if item.get("id") == message_id:
                 return ChatMessageRecord(**item)
         return None
+
+    def update_message(self, message_id: str, patch: Dict[str, Any]) -> Optional[ChatMessageRecord]:
+        updated: Optional[Dict[str, Any]] = None
+
+        def mutate(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            nonlocal updated
+            for item in items:
+                if item.get("id") != message_id:
+                    continue
+                item.update(patch)
+                updated = dict(item)
+                break
+            return items
+
+        self.messages_store.update(mutate)
+        if updated is None:
+            return None
+        self.touch_session(updated["session_id"])
+        return ChatMessageRecord(**updated)
 
     def latest_assistant_message(self, session_id: str) -> Optional[ChatMessageRecord]:
         messages = [

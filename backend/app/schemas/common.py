@@ -53,6 +53,7 @@ class StreamEventType(str, Enum):
     SKILL_FINISHED = "skill_finished"
     PARTIAL_RESULT = "partial_result"
     COMPLETED = "completed"
+    RESULT_ENHANCED = "result_enhanced"
     FAILED = "failed"
 
 
@@ -81,6 +82,19 @@ class GptReasoningPolicy(str, Enum):
     MEDIUM = "medium"
     HIGH = "high"
     XHIGH = "xhigh"
+
+
+class UserVisibleErrorSeverity(str, Enum):
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class UserVisibleError(ContractModel):
+    code: str
+    severity: UserVisibleErrorSeverity = UserVisibleErrorSeverity.ERROR
+    title: str
+    message: str
+    retryable: bool = False
 
 
 class SkillUsage(ContractModel):

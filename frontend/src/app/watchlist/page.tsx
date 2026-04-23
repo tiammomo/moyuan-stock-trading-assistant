@@ -15,12 +15,14 @@ import {
   DialogDescription,
   DialogClose,
 } from "@/components/ui/Dialog";
+import { toast } from "@/components/ui/Toast";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import {
   cn,
   BUCKET_LABELS,
   BUCKET_COLORS,
   formatTimestamp,
+  normalizeStockSymbol,
 } from "@/lib/utils";
 import type {
   WatchItemCreate,
@@ -44,7 +46,7 @@ export default function WatchlistPage() {
     isLoading,
     createItemAsync,
     updateItemAsync,
-    deleteItem,
+    deleteItemAsync,
     resolveStockAsync,
     isCreating,
     isResolving,
@@ -161,6 +163,7 @@ export default function WatchlistPage() {
             note: formData.note,
           },
         });
+        toast.success(`已更新：${editingItem.name}（${editingItem.symbol}）`);
       } else {
         const query = stockQuery.trim();
         let candidate = resolvedCandidate;
@@ -180,17 +183,31 @@ export default function WatchlistPage() {
           tags: formData.tags,
           note: formData.note,
         });
+        const displayName = candidate?.name || formData.name || query;
+        const displaySymbol = normalizeStockSymbol(candidate?.symbol || formData.symbol || null);
+        toast.success(`已加入候选池：${displayName}${displaySymbol ? `（${displaySymbol}）` : ""}`);
       }
 
       setIsAddDialogOpen(false);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "保存失败，请稍后重试");
+      const message = error instanceof Error ? error.message : "保存失败，请稍后重试";
+      setFormError(message);
+      if (message.includes("已在候选池中")) {
+        toast.warning(message);
+      } else {
+        toast.error(message);
+      }
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string, name: string, symbol: string) => {
     if (confirm("确定要从候选池移除吗？")) {
-      deleteItem(id);
+      try {
+        await deleteItemAsync(id);
+        toast.success(`已从候选池移除：${name}（${symbol}）`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "移除失败，请稍后重试");
+      }
     }
   };
 
@@ -317,7 +334,7 @@ export default function WatchlistPage() {
                     variant="ghost"
                     size="sm"
                     className="h-7 text-xs text-red-500"
-                    onClick={() => handleDelete(item.id)}
+                    onClick={() => void handleDelete(item.id, item.name, item.symbol)}
                   >
                     删除
                   </Button>

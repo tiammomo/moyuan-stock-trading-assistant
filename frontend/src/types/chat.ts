@@ -7,6 +7,7 @@ import type {
   SkillUsage,
   SourceRef,
   StructuredResult,
+  UserVisibleError,
 } from "./common";
 
 export interface ChatRequest {
@@ -44,6 +45,7 @@ export interface ChatResponse {
   follow_ups: string[];
   sources: SourceRef[];
   status: ChatResponseStatus;
+  user_visible_error: UserVisibleError | null;
 }
 
 export interface SkillExecutionResult {

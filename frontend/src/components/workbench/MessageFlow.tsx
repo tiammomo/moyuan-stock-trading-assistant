@@ -6,6 +6,7 @@ import { cn, MODE_LABELS, MODE_COLORS } from "@/lib/utils";
 import { useChatStore } from "@/stores/chatStore";
 import { useChatStream } from "@/hooks/useChatStream";
 import { Badge } from "@/components/ui/Badge";
+import { UserVisibleErrorNotice } from "@/components/ui/UserVisibleErrorNotice";
 import type { ChatMessageRecord } from "@/types/session";
 import type { ChatRequest } from "@/types/chat";
 
@@ -102,6 +103,7 @@ function MessageBubble({ message }: { message: ChatMessageRecord }) {
   const isUser = message.role === "user";
   const isAnalyzing = !isUser && !message.content && message.status && message.status !== "idle";
   const statusText = message.status ? STATUS_TEXT[message.status] : null;
+  const hasUserVisibleError = !isUser && !!message.user_visible_error;
   const resultCardCount = message.result_snapshot?.cards?.length ?? 0;
   const factCount = message.result_snapshot?.facts?.length ?? 0;
   const followUpCount = message.result_snapshot?.follow_ups?.length ?? 0;
@@ -126,7 +128,11 @@ function MessageBubble({ message }: { message: ChatMessageRecord }) {
           "max-w-[78%] rounded-[22px] px-4 py-3.5 shadow-neo transition-all duration-200",
           isUser
             ? "bg-gradient-to-br from-primary/22 via-primary/16 to-primary/10 border border-primary/18 text-foreground"
-            : "bg-card/95 border border-border/70 hover:border-primary/18"
+            : message.status === "failed"
+              ? "bg-card/95 border border-red-200/70 hover:border-red-300/70"
+              : hasUserVisibleError
+                ? "bg-card/95 border border-amber-200/70 hover:border-amber-300/70"
+                : "bg-card/95 border border-border/70 hover:border-primary/18"
         )}
       >
         {message.mode && !isUser && (
@@ -180,6 +186,10 @@ function MessageBubble({ message }: { message: ChatMessageRecord }) {
               <span className="text-foreground/92">{message.content}</span>
             )}
           </div>
+        )}
+
+        {!isUser && message.user_visible_error && !isAnalyzing && (
+          <UserVisibleErrorNotice error={message.user_visible_error} compact className="mt-3" />
         )}
 
         {showResultMeta && (

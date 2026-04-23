@@ -1,10 +1,11 @@
 "use client";
 
 import { cn, formatLatency } from "@/lib/utils";
-import type { SkillUsage } from "@/types/common";
+import type { ChatResponseStatus, SkillUsage } from "@/types/common";
 
 interface SkillTracePanelProps {
   skills: SkillUsage[];
+  status?: ChatResponseStatus;
 }
 
 const STATUS_CONFIG: Record<string, { icon: string; color: string; glow: string }> = {
@@ -14,12 +15,19 @@ const STATUS_CONFIG: Record<string, { icon: string; color: string; glow: string 
   failed: { icon: "✕", color: "text-red-400", glow: "shadow-red-500/30" },
 };
 
-export function SkillTracePanel({ skills }: SkillTracePanelProps) {
+export function SkillTracePanel({ skills, status = "idle" }: SkillTracePanelProps) {
   if (skills.length === 0) {
+    const emptyStateText =
+      status === "analyzing" || status === "running_skills"
+        ? "> Waiting for skill route..."
+        : status === "partial_ready" || status === "completed"
+          ? "> No external skills in this run"
+          : "> No skills executed yet";
+
     return (
       <div className="text-center py-8">
         <div className="font-mono text-xs text-muted-foreground/50">
-          &gt; No skills executed yet
+          {emptyStateText}
         </div>
       </div>
     );

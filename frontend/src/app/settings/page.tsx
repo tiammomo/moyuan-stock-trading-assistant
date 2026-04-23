@@ -10,6 +10,7 @@ import { useMetaStatus } from "@/hooks/useMetaStatus";
 import { useProfile } from "@/hooks/useProfile";
 import type { UserProfileUpdate } from "@/types/profile";
 import type { ChatMode, GptReasoningPolicy } from "@/types/common";
+import type { RuntimeSkillStatus } from "@/types/meta";
 
 const RISK_STYLE_OPTIONS = [
   { value: "conservative", label: "保守" },
@@ -527,6 +528,91 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+
+      <section className="mb-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>运行时 Skills</CardTitle>
+            <CardDescription>
+              展示当前后端 registry 已接入的 runtime skill，以及安装目录里的静态版本信息
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {(metaStatus?.runtime_skills || []).map((skill) => (
+                <div
+                  key={skill.skill_id}
+                  className="rounded-xl border border-border/50 bg-muted/20 px-4 py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{skill.display_name}</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground break-all">
+                        {skill.skill_id}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                      <Badge variant={skill.enabled ? "success" : "secondary"} className="text-[11px]">
+                        {skill.enabled ? "enabled" : "disabled"}
+                      </Badge>
+                      <Badge variant="secondary" className="text-[11px]">
+                        {skill.adapter_kind}
+                      </Badge>
+                      <Badge
+                        variant={skill.asset_meta?.version ? "secondary" : "outline"}
+                        className="text-[11px]"
+                      >
+                        {skill.asset_meta?.version ? `v${skill.asset_meta.version}` : "无 _meta"}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground md:grid-cols-2">
+                    <div>
+                      安装目录：
+                      <code className="ml-1 rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                        {skill.asset_path || "-"}
+                      </code>
+                    </div>
+                    <div>
+                      资源标识：
+                      <code className="ml-1 rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                        {skill.asset_meta?.slug || "-"}
+                      </code>
+                    </div>
+                    <div>
+                      元数据文件：
+                      <code className="ml-1 rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                        {skill.asset_meta?.meta_path || "-"}
+                      </code>
+                    </div>
+                    <div>
+                      发布时间：
+                      <span className="ml-1">{formatPublishedAt(skill)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {(metaStatus?.runtime_skills?.length || 0) === 0 && (
+                <div className="rounded-xl border border-dashed border-border/60 px-4 py-6 text-sm text-muted-foreground">
+                  当前没有可展示的 runtime skill 元数据。
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
+}
+
+function formatPublishedAt(skill: RuntimeSkillStatus): string {
+  const timestamp = skill.asset_meta?.published_at;
+  if (!timestamp) return "-";
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

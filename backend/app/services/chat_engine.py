@@ -5,11 +5,11 @@ from datetime import datetime
 import json
 import math
 import re
-import time
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.schemas import (
     CardType,
+    ChatMessageRecord,
     ChatMode,
     ChatResponse,
     ChatResponseStatus,
@@ -22,6 +22,34 @@ from app.schemas import (
     SourceRef,
     StructuredResult,
     UserProfile,
+    UserVisibleError,
+    UserVisibleErrorSeverity,
+)
+from .skill_adapters import (
+    LocalOrderBookAdapterResult,
+    LocalRealheadAdapterResult,
+    LocalThemeAdapterResult,
+    WencaiQueryAdapterResult,
+    WencaiSearchAdapterResult,
+    get_skill_adapter,
+)
+from .skill_registry import (
+    SKILL_LOCAL_ORDERBOOK,
+    SKILL_LOCAL_REALHEAD,
+    SKILL_LOCAL_THEME,
+    SKILL_SEARCH_ANNOUNCEMENT,
+    SKILL_SEARCH_NEWS,
+    SKILL_SEARCH_REPORT,
+    SKILL_WENCAI_FINANCIAL_QUERY,
+    SKILL_WENCAI_INDUSTRY_QUERY,
+    SKILL_WENCAI_MARKET_QUERY,
+    SKILL_WENCAI_SECTOR_SCREEN,
+    SKILL_WENCAI_SHAREHOLDER_QUERY,
+    SKILL_WENCAI_SINGLE_SECURITY_FUNDAMENTAL,
+    SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT,
+    SKILL_WENCAI_STOCK_SCREEN,
+    SkillAdapterKind,
+    skill_registry,
 )
 
 from .local_market_skill_client import (
@@ -39,11 +67,10 @@ from .sim_trading_client import SimTradingClientError, SimTradingHoldingContext,
 
 @dataclass
 class SkillPlan:
+    skill_id: str
     name: str
     query: str
     reason: str
-    kind: str = "query2data"
-    channel: Optional[str] = None
 
 
 @dataclass
@@ -102,20 +129,38 @@ class TechnicalSnapshot:
     debt_ratio: Optional[float] = None
 
 
-COMMON_SINGLE_SECURITY_FIELDS = (
+def _skill_plan(
+    skill_id: str,
+    query: str,
+    reason: str,
+    *,
+    name: Optional[str] = None,
+) -> SkillPlan:
+    spec = skill_registry.require(skill_id)
+    return SkillPlan(skill_id=skill_id, name=name or spec.display_name, query=query, reason=reason)
+
+
+SINGLE_SECURITY_PRICE_FIELDS = (
     "最新价 涨跌幅 近5日涨跌幅 近20日涨跌幅 "
-    "开盘价 最高价 最低价 振幅 量比 换手率 成交额 主力资金净流入 "
-    "5日均线 10日均线 20日均线 60日均线 "
-    "MACD DIF DEA RSI KDJ 布林带上轨 布林带中轨 布林带下轨 "
-    "市净率 所属同花顺行业 所属行业 所属概念 上市板块 上市地点"
+    "开盘价 最高价 最低价 振幅 量比 换手率 成交额 主力资金净流入"
 )
 
-MID_TERM_EXTRA_FIELDS = "市盈率 ROE 营收增速 净利润增速 经营现金流"
+SINGLE_SECURITY_TECHNICAL_FIELDS = (
+    "5日均线 10日均线 20日均线 60日均线 "
+    "MACD DIF DEA RSI KDJ 布林带上轨 布林带中轨 布林带下轨"
+)
 
-FUNDAMENTAL_SINGLE_SECURITY_FIELDS = (
-    "最新财报 市盈率 ROE 净资产收益率 营业收入 营收增速 营业收入同比增长率 "
-    "归母净利润 净利润增速 归母净利润同比增长率 扣非归母净利润 "
-    "经营现金流 经营活动产生的现金流量净额 毛利率 销售毛利率 资产负债率"
+SINGLE_SECURITY_THEME_FIELDS = "市净率 所属同花顺行业 所属行业 所属概念 上市板块 上市地点"
+
+SINGLE_SECURITY_FUNDAMENTAL_CORE_FIELDS = (
+    "最新财报 营业收入 营业收入同比增长率 "
+    "归母净利润 归母净利润同比增长率 扣非归母净利润 "
+    "经营活动产生的现金流量净额 毛利率 销售毛利率 资产负债率"
+)
+
+SINGLE_SECURITY_VALUATION_CASHFLOW_FIELDS = (
+    "最新财报 市盈率 ROE 净资产收益率 "
+    "营收增速 净利润增速 经营现金流 经营活动产生的现金流量净额"
 )
 
 
@@ -154,6 +199,10 @@ SECURITY_SUBJECT_STOPWORDS = {
     "股票",
     "的股票",
 }
+
+SECURITY_SUBJECT_PREFIXES = tuple(sorted(SECURITY_SUBJECT_STOPWORDS, key=len, reverse=True))
+
+FOLLOW_UP_COMPARE_KEYWORDS = ("对比", "比较", "打分", "比一下", "比一比")
 
 
 def detect_mode(
@@ -217,21 +266,29 @@ def _looks_like_specific_query(message: str) -> bool:
             "研报",
             "行业",
             "板块",
+            "趋势",
+            "只保留",
+            "去掉",
+            "剔除",
+            "过滤",
+            "筛选条件",
+            "高股息",
         )
     )
 
 
 def _extract_security_subject(message: str) -> Optional[str]:
-    code_match = re.search(r"([0368]\d{5}(?:\.(?:SH|SZ|BJ))?)", message, re.IGNORECASE)
+    normalized_message = re.sub(r"\s+", "", message)
+    code_match = re.search(r"([0368]\d{5}(?:\.(?:SH|SZ|BJ))?)", normalized_message, re.IGNORECASE)
     if code_match:
         return code_match.group(1).upper()
 
     for pattern in SECURITY_ADVISORY_PATTERNS:
-        match = re.search(pattern, message)
+        match = re.search(pattern, normalized_message)
         if not match:
             continue
         subject = match.group("subject").strip(" ，。！？?？")
-        for stopword in SECURITY_SUBJECT_STOPWORDS:
+        for stopword in SECURITY_SUBJECT_PREFIXES:
             subject = subject.removeprefix(stopword)
         subject = re.sub(r"(今天|今日)$", "", subject)
         subject = subject.strip()
@@ -271,14 +328,44 @@ def _is_holding_question(message: str) -> bool:
     return any(keyword in message for keyword in keywords)
 
 
-def _build_single_security_query(subject: str, mode: ChatMode) -> str:
-    if mode == ChatMode.MID_TERM_VALUE:
-        return f"{subject} {COMMON_SINGLE_SECURITY_FIELDS} {MID_TERM_EXTRA_FIELDS}"
-    return f"{subject} {COMMON_SINGLE_SECURITY_FIELDS}"
+def _build_single_security_snapshot_plans(subject: str, mode: ChatMode) -> List[SkillPlan]:
+    return [
+        _skill_plan(
+            SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT,
+            f"{subject} {SINGLE_SECURITY_PRICE_FIELDS}",
+            "获取价格、涨跌、量比、换手和资金快照",
+            name="个股价格量能",
+        ),
+        _skill_plan(
+            SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT,
+            f"{subject} {SINGLE_SECURITY_TECHNICAL_FIELDS}",
+            "获取均线、MACD、RSI、KDJ和布林带技术指标",
+            name="个股技术指标",
+        ),
+        _skill_plan(
+            SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT,
+            f"{subject} {SINGLE_SECURITY_THEME_FIELDS}",
+            "补充行业、概念、板块、上市地和市净率",
+            name="个股行业题材",
+        ),
+    ]
 
 
-def _build_single_security_fundamental_query(subject: str) -> str:
-    return f"{subject} {FUNDAMENTAL_SINGLE_SECURITY_FIELDS}"
+def _build_single_security_fundamental_plans(subject: str) -> List[SkillPlan]:
+    return [
+        _skill_plan(
+            SKILL_WENCAI_SINGLE_SECURITY_FUNDAMENTAL,
+            f"{subject} {SINGLE_SECURITY_FUNDAMENTAL_CORE_FIELDS}",
+            "补充最新财报核心指标",
+            name="财报核心指标",
+        ),
+        _skill_plan(
+            SKILL_WENCAI_SINGLE_SECURITY_FUNDAMENTAL,
+            f"{subject} {SINGLE_SECURITY_VALUATION_CASHFLOW_FIELDS}",
+            "补充估值、ROE、增速和现金流指标",
+            name="估值现金流补充",
+        ),
+    ]
 
 
 def _single_security_route(
@@ -288,10 +375,12 @@ def _single_security_route(
     entry_price_focus: bool = False,
     holding_context_focus: bool = False,
 ) -> RoutePlan:
+    snapshot_plans = _build_single_security_snapshot_plans(subject, mode)
+    fundamental_plans = _build_single_security_fundamental_plans(subject)
     local_plans = [
-        SkillPlan("同花顺行情快照", subject, "补充最新价、量比、换手和盘口基础数据", kind="local_realhead"),
-        SkillPlan("同花顺盘口分析", subject, "补充五档盘口和逐笔成交", kind="local_orderbook"),
-        SkillPlan("同花顺题材补充", subject, "补充地域、概念和主营业务", kind="local_theme"),
+        _skill_plan(SKILL_LOCAL_REALHEAD, subject, "补充最新价、量比、换手和盘口基础数据"),
+        _skill_plan(SKILL_LOCAL_ORDERBOOK, subject, "补充五档盘口和逐笔成交"),
+        _skill_plan(SKILL_LOCAL_THEME, subject, "补充地域、概念和主营业务"),
     ]
     if mode == ChatMode.MID_TERM_VALUE:
         return RoutePlan(
@@ -302,11 +391,11 @@ def _single_security_route(
             entry_price_focus=entry_price_focus,
             holding_context_focus=holding_context_focus,
             skills=[
-                SkillPlan("个股快照", _build_single_security_query(subject, mode), "获取个股估值和财务快照"),
-                SkillPlan("财报快照", _build_single_security_fundamental_query(subject), "补充最新财报、估值和财务质量"),
+                *snapshot_plans,
+                *fundamental_plans,
                 *local_plans,
-                SkillPlan("研报搜索", f"{subject} 研究报告", "补充机构观点", kind="search", channel="report"),
-                SkillPlan("公告搜索", f"{subject} 公告", "补充最新公告", kind="search", channel="announcement"),
+                _skill_plan(SKILL_SEARCH_REPORT, f"{subject} 研究报告", "补充机构观点"),
+                _skill_plan(SKILL_SEARCH_ANNOUNCEMENT, f"{subject} 公告", "补充最新公告"),
             ],
         )
 
@@ -319,11 +408,11 @@ def _single_security_route(
             entry_price_focus=entry_price_focus,
             holding_context_focus=holding_context_focus,
             skills=[
-                SkillPlan("个股快照", _build_single_security_query(subject, mode), "获取个股趋势和资金快照"),
-                SkillPlan("财报快照", _build_single_security_fundamental_query(subject), "补充最新财报、估值和财务质量"),
+                *snapshot_plans,
+                *fundamental_plans,
                 *local_plans,
-                SkillPlan("新闻搜索", f"{subject} 新闻", "补充近期新闻催化", kind="search", channel="news"),
-                SkillPlan("公告搜索", f"{subject} 公告", "补充最新公告", kind="search", channel="announcement"),
+                _skill_plan(SKILL_SEARCH_NEWS, f"{subject} 新闻", "补充近期新闻催化"),
+                _skill_plan(SKILL_SEARCH_ANNOUNCEMENT, f"{subject} 公告", "补充最新公告"),
             ],
         )
 
@@ -335,11 +424,11 @@ def _single_security_route(
         entry_price_focus=entry_price_focus,
         holding_context_focus=holding_context_focus,
         skills=[
-            SkillPlan("个股快照", _build_single_security_query(subject, mode), "获取个股当日交易画像"),
-            SkillPlan("财报快照", _build_single_security_fundamental_query(subject), "补充最新财报、估值和财务质量"),
+            *snapshot_plans,
+            *fundamental_plans,
             *local_plans,
-            SkillPlan("新闻搜索", f"{subject} 新闻", "补充近期新闻催化", kind="search", channel="news"),
-            SkillPlan("公告搜索", f"{subject} 公告", "补充最新公告", kind="search", channel="announcement"),
+            _skill_plan(SKILL_SEARCH_NEWS, f"{subject} 新闻", "补充近期新闻催化"),
+            _skill_plan(SKILL_SEARCH_ANNOUNCEMENT, f"{subject} 公告", "补充最新公告"),
         ],
     )
 
@@ -363,9 +452,9 @@ def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan
             mode=mode,
             strategy=SkillStrategy.SCREEN_THEN_ENRICH,
             skills=[
-                SkillPlan("问财选板块", f"今日A股涨跌幅前{max(limit, 5)}的板块", "判断短线市场主线"),
-                SkillPlan("问财选A股", stock_query, "筛选短线候选股"),
-                SkillPlan("行情数据查询", f"今日主力资金净流入前{max(limit, 5)}的A股", "补充资金承接"),
+                _skill_plan(SKILL_WENCAI_SECTOR_SCREEN, f"今日A股涨跌幅前{max(limit, 5)}的板块", "判断短线市场主线"),
+                _skill_plan(SKILL_WENCAI_STOCK_SCREEN, stock_query, "筛选短线候选股"),
+                _skill_plan(SKILL_WENCAI_MARKET_QUERY, f"今日主力资金净流入前{max(limit, 5)}的A股", "补充资金承接"),
             ],
         )
 
@@ -375,9 +464,9 @@ def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan
             mode=mode,
             strategy=SkillStrategy.SCREEN_THEN_ENRICH,
             skills=[
-                SkillPlan("问财选A股", stock_query, "筛选波段趋势候选"),
-                SkillPlan("行业数据查询", "近20日涨幅前10的A股板块", "补充行业轮动状态"),
-                SkillPlan("财务数据查询", "近一年净利润增长且ROE较高的A股", "补充基本面质量"),
+                _skill_plan(SKILL_WENCAI_STOCK_SCREEN, stock_query, "筛选波段趋势候选"),
+                _skill_plan(SKILL_WENCAI_INDUSTRY_QUERY, "近20日涨幅前10的A股板块", "补充行业轮动状态"),
+                _skill_plan(SKILL_WENCAI_FINANCIAL_QUERY, "近一年净利润增长且ROE较高的A股", "补充基本面质量"),
             ],
         )
 
@@ -387,9 +476,9 @@ def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan
             mode=mode,
             strategy=SkillStrategy.RESEARCH_EXPAND,
             skills=[
-                SkillPlan("财务数据查询", finance_query, "筛选财务和估值质量"),
-                SkillPlan("公司股东股本查询", "股东户数下降且前十大股东持股稳定的A股", "补充筹码和股东结构"),
-                SkillPlan("研报搜索", "A股 低估值 高ROE 研究报告", "补充机构观点", kind="search", channel="report"),
+                _skill_plan(SKILL_WENCAI_FINANCIAL_QUERY, finance_query, "筛选财务和估值质量"),
+                _skill_plan(SKILL_WENCAI_SHAREHOLDER_QUERY, "股东户数下降且前十大股东持股稳定的A股", "补充筹码和股东结构"),
+                _skill_plan(SKILL_SEARCH_REPORT, "A股 低估值 高ROE 研究报告", "补充机构观点"),
             ],
         )
 
@@ -399,7 +488,7 @@ def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan
     return RoutePlan(
         mode=mode,
         strategy=SkillStrategy.SINGLE_SOURCE,
-        skills=[SkillPlan("问财选A股", message, "按原始问句查询问财数据")],
+        skills=[_skill_plan(SKILL_WENCAI_STOCK_SCREEN, message, "按原始问句查询问财数据")],
     )
 
 
@@ -518,15 +607,6 @@ def normalize_table(datas: List[Dict[str, Any]], mode: ChatMode, source_skill: s
     return ResultTable(columns=columns, rows=rows)
 
 
-def _result_titles(items: List[Dict[str, Any]], limit: int = 3) -> List[str]:
-    titles = []
-    for item in items[:limit]:
-        title = item.get("title") or item.get("summary")
-        if title:
-            titles.append(str(title))
-    return titles
-
-
 def _skill_success(name: str, latency_ms: Optional[int], reason: str) -> SkillUsage:
     return SkillUsage(name=name, status=SkillRunStatus.SUCCESS, latency_ms=latency_ms, reason=reason)
 
@@ -535,18 +615,57 @@ def _skill_failed(name: str, reason: str) -> SkillUsage:
     return SkillUsage(name=name, status=SkillRunStatus.FAILED, latency_ms=None, reason=reason)
 
 
+def _execution_user_visible_error(failure_reasons: List[str]) -> UserVisibleError:
+    first_reason = next((reason for reason in failure_reasons if reason), "")
+    if not first_reason:
+        return UserVisibleError(
+            code="iwencai_upstream_error",
+            severity=UserVisibleErrorSeverity.WARNING,
+            title="问财接口调用失败",
+            message="问财接口暂时不可用，请稍后重试。",
+            retryable=True,
+        )
+
+    if "API_KEY 未配置" in first_reason or "HTTP 401" in first_reason or "HTTP 403" in first_reason:
+        return UserVisibleError(
+            code="iwencai_auth_failed",
+            severity=UserVisibleErrorSeverity.WARNING,
+            title="问财鉴权失败",
+            message="问财鉴权失败，请检查后端 IWENCAI_API_KEY 后重试。",
+            retryable=False,
+        )
+
+    if "网络错误" in first_reason:
+        return UserVisibleError(
+            code="iwencai_network_error",
+            severity=UserVisibleErrorSeverity.WARNING,
+            title="问财接口网络异常",
+            message="问财接口网络异常，请稍后重试。",
+            retryable=True,
+        )
+
+    return UserVisibleError(
+        code="iwencai_upstream_error",
+        severity=UserVisibleErrorSeverity.WARNING,
+        title="问财接口调用失败",
+        message=first_reason[:120],
+        retryable=True,
+    )
+
+
 def _primary_skill_priority(plan: SkillPlan, mode: ChatMode) -> int:
-    if plan.kind != "query2data":
-        if plan.kind == "local_realhead":
+    spec = skill_registry.require(plan.skill_id)
+    if spec.adapter_kind != SkillAdapterKind.WENCAI_QUERY:
+        if spec.adapter_kind == SkillAdapterKind.LOCAL_REALHEAD:
             return 95
         return -1
-    if plan.name in {"问财选A股", "个股快照"}:
+    if plan.skill_id in {SKILL_WENCAI_STOCK_SCREEN, SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT}:
         return 100
-    if mode == ChatMode.MID_TERM_VALUE and plan.name == "财务数据查询":
+    if mode == ChatMode.MID_TERM_VALUE and plan.skill_id == SKILL_WENCAI_FINANCIAL_QUERY:
         return 90
-    if plan.name == "行情数据查询":
+    if plan.skill_id == SKILL_WENCAI_MARKET_QUERY:
         return 80
-    if plan.name in {"财务数据查询", "公司股东股本查询"}:
+    if plan.skill_id in {SKILL_WENCAI_FINANCIAL_QUERY, SKILL_WENCAI_SHAREHOLDER_QUERY}:
         return 70
     if "板块" in plan.name or "行业" in plan.name:
         return 20
@@ -2173,7 +2292,7 @@ def _execute_plan_core(
     route: RoutePlan,
     profile: UserProfile,
     user_message: str = "",
-) -> tuple[StructuredResult, List[SkillUsage], str]:
+) -> tuple[StructuredResult, List[SkillUsage], str, Optional[UserVisibleError]]:
     limit = profile.default_result_size or 5
     skills_used: List[SkillUsage] = []
     sources: List[SourceRef] = []
@@ -2188,16 +2307,21 @@ def _execute_plan_core(
     primary_raw_row: Optional[Dict[str, Any]] = None
     failure_reasons: List[str] = []
     fallback_summary: Optional[str] = None
+    user_visible_error: Optional[UserVisibleError] = None
     holding_context: Optional[SimTradingHoldingContext] = None
     local_market = LocalMarketContext()
     used_wencai_source = False
     used_local_market_source = False
 
-    for idx, plan in enumerate(route.skills):
+    for plan in route.skills:
+        spec = skill_registry.require(plan.skill_id)
+        adapter = get_skill_adapter(spec.adapter_kind)
         try:
-            if plan.kind == "search" and plan.channel:
-                result = wencai_client.comprehensive_search(plan.channel, plan.query, limit=3)
-                titles = _result_titles(result.get("data", []))
+            if spec.adapter_kind == SkillAdapterKind.WENCAI_SEARCH:
+                adapter_result = adapter.execute(spec, query=plan.query, limit=3)
+                if not isinstance(adapter_result, WencaiSearchAdapterResult):
+                    raise TypeError(f"{plan.skill_id} returned unexpected adapter result")
+                titles = adapter_result.titles
                 if titles:
                     cards.append(
                         ResultCard(
@@ -2206,22 +2330,23 @@ def _execute_plan_core(
                             content="\n".join(f"- {title}" for title in titles),
                         )
                     )
-                skills_used.append(_skill_success(plan.name, result.get("_latency_ms"), plan.reason))
+                skills_used.append(_skill_success(plan.name, adapter_result.latency_ms, plan.reason))
                 sources.append(SourceRef(skill=plan.name, query=plan.query))
                 used_wencai_source = True
                 continue
 
-            if plan.kind == "local_realhead":
-                started = time.perf_counter()
+            if spec.adapter_kind == SkillAdapterKind.LOCAL_REALHEAD:
                 resolved = _ensure_local_resolved_security(route, plan, primary_raw_row, local_market)
-                realhead = local_market_skill_client.fetch_realhead(resolved.code)
+                adapter_result = adapter.execute(spec, code=resolved.code)
+                if not isinstance(adapter_result, LocalRealheadAdapterResult):
+                    raise TypeError(f"{plan.skill_id} returned unexpected adapter result")
+                realhead = adapter_result.snapshot
                 if not realhead.name and resolved.name:
                     realhead.name = resolved.name
                 if not resolved.name and realhead.name:
                     resolved.name = realhead.name
                 local_market.realhead = realhead
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                skills_used.append(_skill_success(plan.name, latency_ms, plan.reason))
+                skills_used.append(_skill_success(plan.name, adapter_result.latency_ms, plan.reason))
                 sources.append(SourceRef(skill=plan.name, query=resolved.symbol or resolved.code))
                 facts.append(f"{plan.name} 已补充 {realhead.name or resolved.name or resolved.code} 的实时行情快照。")
                 used_local_market_source = True
@@ -2242,32 +2367,35 @@ def _execute_plan_core(
                 ]
                 continue
 
-            if plan.kind == "local_orderbook":
-                started = time.perf_counter()
+            if spec.adapter_kind == SkillAdapterKind.LOCAL_ORDERBOOK:
                 resolved = _ensure_local_resolved_security(route, plan, primary_raw_row, local_market)
-                local_market.order_book = local_market_skill_client.fetch_order_book(
-                    resolved.code,
+                adapter_result = adapter.execute(
+                    spec,
+                    code=resolved.code,
                     realhead=local_market.realhead,
                 )
-                local_market.trades = local_market_skill_client.fetch_trade_details(resolved.code, limit=12)
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                skills_used.append(_skill_success(plan.name, latency_ms, plan.reason))
+                if not isinstance(adapter_result, LocalOrderBookAdapterResult):
+                    raise TypeError(f"{plan.skill_id} returned unexpected adapter result")
+                local_market.order_book = adapter_result.order_book
+                local_market.trades = adapter_result.trades
+                skills_used.append(_skill_success(plan.name, adapter_result.latency_ms, plan.reason))
                 sources.append(SourceRef(skill=plan.name, query=resolved.symbol or resolved.code))
                 facts.append(f"{plan.name} 已补充五档盘口和最近逐笔成交。")
                 used_local_market_source = True
                 continue
 
-            if plan.kind == "local_theme":
-                started = time.perf_counter()
+            if spec.adapter_kind == SkillAdapterKind.LOCAL_THEME:
                 resolved = _ensure_local_resolved_security(route, plan, primary_raw_row, local_market)
-                theme = local_market_skill_client.fetch_theme_snapshot(resolved.code)
+                adapter_result = adapter.execute(spec, code=resolved.code)
+                if not isinstance(adapter_result, LocalThemeAdapterResult):
+                    raise TypeError(f"{plan.skill_id} returned unexpected adapter result")
+                theme = adapter_result.snapshot
                 if not theme.name and resolved.name:
                     theme.name = resolved.name
                 if not resolved.name and theme.name:
                     resolved.name = theme.name
                 local_market.theme = theme
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                skills_used.append(_skill_success(plan.name, latency_ms, plan.reason))
+                skills_used.append(_skill_success(plan.name, adapter_result.latency_ms, plan.reason))
                 sources.append(SourceRef(skill=plan.name, query=resolved.symbol or resolved.code))
                 facts.append(f"{plan.name} 已补充地域、概念和主营业务。")
                 used_local_market_source = True
@@ -2277,21 +2405,35 @@ def _execute_plan_core(
                     primary_table = _refresh_primary_table(primary_raw_row, route.mode, primary_source_skill)
                 continue
 
-            result = wencai_client.query2data(plan.query, limit=max(limit, 5))
-            datas = result.get("datas") or []
-            skills_used.append(_skill_success(plan.name, result.get("_latency_ms"), plan.reason))
+            if spec.adapter_kind != SkillAdapterKind.WENCAI_QUERY:
+                raise TypeError(f"Unsupported adapter kind: {spec.adapter_kind.value}")
+
+            adapter_result = adapter.execute(spec, query=plan.query, limit=max(limit, 5))
+            if not isinstance(adapter_result, WencaiQueryAdapterResult):
+                raise TypeError(f"{plan.skill_id} returned unexpected adapter result")
+            datas = adapter_result.rows
+            skills_used.append(_skill_success(plan.name, adapter_result.latency_ms, plan.reason))
             sources.append(SourceRef(skill=plan.name, query=plan.query))
-            facts.append(f"{plan.name} 查询 `{plan.query}` 命中 {result.get('code_count', len(datas))} 条，当前取 {len(datas)} 条。")
+            facts.append(f"{plan.name} 查询 `{plan.query}` 命中 {adapter_result.code_count} 条，当前取 {len(datas)} 条。")
             used_wencai_source = True
 
-            if route.single_security and plan.name == "财报快照" and datas:
+            if route.single_security and plan.skill_id in {
+                SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT,
+                SKILL_WENCAI_SINGLE_SECURITY_FUNDAMENTAL,
+            } and datas:
                 selected_raw = _select_single_security_row(datas, route.subject)
                 if selected_raw is not None:
                     primary_raw_row = _merge_raw_fields(primary_raw_row, selected_raw, overwrite=False)
                     primary_source_skill = _append_source_label(primary_source_skill, plan.name)
                     primary_table = _refresh_primary_table(primary_raw_row, route.mode, primary_source_skill)
-                    primary_query = primary_query or plan.query
+                    primary_query = route.subject or primary_query or plan.query
                     primary_priority = max(primary_priority, _primary_skill_priority(plan, route.mode))
+                    code = _extract_security_code_from_raw(primary_raw_row)
+                    name = _extract_security_name_from_raw(primary_raw_row)
+                    if code:
+                        local_market.resolved = local_market.resolved or local_market_skill_client.resolve_security(code)
+                        if name and not local_market.resolved.name:
+                            local_market.resolved.name = name
                     collected_names = [
                         str(row.get("名称") or "")
                         for row in primary_table.rows
@@ -2362,6 +2504,7 @@ def _execute_plan_core(
 
         if skills_used and all(skill.status == SkillRunStatus.FAILED for skill in skills_used):
             first_reason = failure_reasons[0] if failure_reasons else ""
+            user_visible_error = _execution_user_visible_error(failure_reasons)
             fallback_tip = "问财接口调用失败"
             if "API_KEY 未配置" in first_reason or "HTTP 401" in first_reason or "HTTP 403" in first_reason:
                 fallback_suggestion = "问财鉴权失败，请检查后端 IWENCAI_API_KEY 后重试。"
@@ -2447,7 +2590,7 @@ def _execute_plan_core(
         follow_ups=follow_ups,
         sources=sources,
     ))
-    return structured, skills_used, primary_query
+    return structured, skills_used, primary_query, user_visible_error
 
 
 def _enhance_result_with_llm(
@@ -2468,13 +2611,53 @@ def execute_plan(
     route: RoutePlan,
     profile: UserProfile,
     user_message: str = "",
-) -> tuple[StructuredResult, List[SkillUsage], str]:
+) -> tuple[StructuredResult, List[SkillUsage], str, Optional[UserVisibleError]]:
     return langgraph_stock_agent.invoke(
         route=route,
         profile=profile,
         user_message=user_message,
         skill_executor=_execute_plan_core,
         result_enhancer=_enhance_result_with_llm,
+    )
+
+
+def execute_plan_base(
+    route: RoutePlan,
+    profile: UserProfile,
+    user_message: str = "",
+) -> tuple[StructuredResult, List[SkillUsage], str, Optional[UserVisibleError], bool]:
+    state = langgraph_stock_agent.invoke_base(
+        route=route,
+        profile=profile,
+        user_message=user_message,
+        skill_executor=_execute_plan_core,
+    )
+    return (
+        state["result"],
+        state.get("skills_used", []),
+        state.get("rewritten_query", ""),
+        state.get("user_visible_error"),
+        state.get("should_enhance", False),
+    )
+
+
+def enhance_plan_result(
+    route: RoutePlan,
+    result: StructuredResult,
+    profile: UserProfile,
+    *,
+    user_message: str = "",
+    should_enhance: bool = True,
+    user_visible_error: Optional[UserVisibleError] = None,
+) -> StructuredResult:
+    return langgraph_stock_agent.enhance(
+        route=route,
+        profile=profile,
+        user_message=user_message,
+        result=result,
+        result_enhancer=_enhance_result_with_llm,
+        should_enhance=should_enhance,
+        user_visible_error=user_visible_error,
     )
 
 
@@ -2517,6 +2700,488 @@ def compare_from_snapshot(snapshot: Optional[StructuredResult], message: str) ->
     )
 
 
+def _row_text_value(row: Dict[str, Any], key: str) -> str:
+    value = row.get(key)
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _row_change_pct(row: Dict[str, Any]) -> Optional[float]:
+    return _safe_float(_row_text_value(row, "涨跌幅").replace("%", ""))
+
+
+def _keyword_score(text: str, rules: Dict[str, int]) -> int:
+    score = 0
+    lowered = text.lower()
+    for keyword, weight in rules.items():
+        if keyword.lower() in lowered:
+            score += weight
+    return score
+
+
+def _row_risk_score(row: Dict[str, Any]) -> int:
+    change = _row_change_pct(row)
+    technical = _row_text_value(row, "技术面")
+    fundamental = _row_text_value(row, "基本面")
+    logic = _row_text_value(row, "核心逻辑")
+    risk = _row_text_value(row, "风险点")
+
+    score = 45
+    if change is not None:
+        if change >= 9.5:
+            score += 24
+        elif change >= 6:
+            score += 12
+        elif change <= -5:
+            score += 10
+        elif -2 <= change <= 4:
+            score -= 4
+
+    score += _keyword_score(
+        risk,
+        {
+            "追高": 16,
+            "分歧": 10,
+            "退潮": 14,
+            "止损": 8,
+            "价值陷阱": 16,
+            "失效": 8,
+        },
+    )
+    score += _keyword_score(
+        technical,
+        {
+            "低于MA20": 12,
+            "低于MA5": 6,
+            "绿柱": 10,
+            "超卖": 4,
+        },
+    )
+    score += _keyword_score(
+        fundamental,
+        {
+            "现金流承压": 12,
+            "负债率": 6,
+        },
+    )
+    score -= _keyword_score(
+        technical,
+        {
+            "高于MA20": 10,
+            "高于MA5": 6,
+            "红柱": 8,
+            "趋势修复": 6,
+        },
+    )
+    score -= _keyword_score(
+        logic,
+        {
+            "低估值": 4,
+            "财务质量": 4,
+            "资金条件入选": 3,
+        },
+    )
+    return max(0, min(score, 100))
+
+
+def _row_trend_score(row: Dict[str, Any]) -> int:
+    change = _row_change_pct(row)
+    technical = _row_text_value(row, "技术面")
+    logic = _row_text_value(row, "核心逻辑")
+    risk = _row_text_value(row, "风险点")
+
+    score = 50
+    if change is not None:
+        if 0 <= change <= 7:
+            score += 6
+        elif change >= 9.5:
+            score -= 8
+        elif change <= -5:
+            score -= 10
+
+    score += _keyword_score(
+        technical,
+        {
+            "高于MA20": 14,
+            "高于MA5": 8,
+            "红柱": 10,
+            "趋势修复": 8,
+            "放量": 4,
+        },
+    )
+    score += _keyword_score(
+        logic,
+        {
+            "趋势和资金条件入选": 8,
+            "短线强势或资金关注": 5,
+        },
+    )
+    score -= _keyword_score(
+        technical,
+        {
+            "低于MA20": 14,
+            "低于MA5": 8,
+            "绿柱": 10,
+            "超卖": 4,
+        },
+    )
+    score -= _keyword_score(
+        risk,
+        {
+            "分歧": 8,
+            "退潮": 10,
+            "止损": 6,
+        },
+    )
+    return max(0, min(score, 100))
+
+
+def _row_fundamental_score(row: Dict[str, Any]) -> int:
+    fundamental = _row_text_value(row, "基本面")
+    logic = _row_text_value(row, "核心逻辑")
+    risk = _row_text_value(row, "风险点")
+
+    if not fundamental and not logic:
+        return 0
+
+    score = 40
+    score += _keyword_score(
+        f"{fundamental} {logic}",
+        {
+            "ROE": 14,
+            "现金流": 12,
+            "净利润": 8,
+            "营收": 6,
+            "PE": 4,
+            "PB": 4,
+            "低估值": 10,
+            "财务质量": 10,
+            "高股息": 10,
+            "分红": 8,
+        },
+    )
+    score -= _keyword_score(
+        f"{fundamental} {risk}",
+        {
+            "价值陷阱": 16,
+            "现金流承压": 12,
+            "负债率": 8,
+            "风险": 4,
+        },
+    )
+    return max(0, min(score, 100))
+
+
+def _is_a_share_row(row: Dict[str, Any]) -> bool:
+    code = _row_text_value(row, "代码").upper()
+    return code.endswith((".SH", ".SZ", ".BJ"))
+
+
+def _snapshot_refine_keep_count(total: int) -> int:
+    if total <= 1:
+        return total
+    return min(3, max(1, math.ceil(total / 2)))
+
+
+def refine_follow_up_from_snapshot(
+    snapshot: Optional[StructuredResult],
+    message: str,
+    *,
+    parent_mode: Optional[ChatMode] = None,
+) -> Optional[StructuredResult]:
+    if snapshot is None or snapshot.table is None or not snapshot.table.rows:
+        return None
+
+    text = " ".join(message.strip().split())
+    lowered = text.lower()
+    rows = [dict(row) for row in snapshot.table.rows]
+    original_count = len(rows)
+    refined_rows: List[Dict[str, Any]] = rows
+    action = ""
+    explanation = ""
+    local_field_hint = ""
+
+    if "只保留趋势更稳" in text or "趋势更稳" in text:
+        action = "filter_trend"
+        ranked = sorted(rows, key=_row_trend_score, reverse=True)
+        keep_count = _snapshot_refine_keep_count(len(ranked))
+        refined_rows = ranked[:keep_count]
+        explanation = "趋势稳定度优先参考技术面中的均线位置、MACD 状态、涨跌幅和风险点。"
+        local_field_hint = "技术面 / 涨跌幅 / 风险点"
+    elif "只保留风险最低" in text or "只保留低风险" in text:
+        action = "filter_low_risk"
+        ranked = sorted(rows, key=_row_risk_score)
+        keep_count = _snapshot_refine_keep_count(len(ranked))
+        refined_rows = ranked[:keep_count]
+        explanation = "风险高低优先参考涨跌幅、风险点文案和技术面里的均线 / MACD 状态。"
+        local_field_hint = "涨跌幅 / 技术面 / 风险点"
+    elif ("按" in text and "风险排序" in text) or "按回撤风险排序" in text:
+        action = "sort_risk"
+        refined_rows = sorted(rows, key=_row_risk_score)
+        explanation = "这次按回撤风险从低到高重排，越靠前表示规则化风险越低。"
+        local_field_hint = "涨跌幅 / 技术面 / 风险点"
+    elif "财务质量排序" in text or "按财务质量排序" in text:
+        action = "sort_fundamental"
+        ranked = sorted(rows, key=_row_fundamental_score, reverse=True)
+        if _row_fundamental_score(ranked[0]) <= 0:
+            return None
+        refined_rows = ranked
+        explanation = "财务质量排序只使用当前结果表已有的基本面摘要，不补调新财报。"
+        local_field_hint = "基本面 / 核心逻辑 / 风险点"
+    elif (
+        "涨幅过大" in text
+        and any(keyword in text for keyword in ("去掉", "剔除", "排除", "不要", "别要"))
+    ):
+        action = "drop_overextended"
+        threshold = 9.5 if parent_mode == ChatMode.SHORT_TERM else 12.0
+        refined_rows = [
+            row for row in rows if (_row_change_pct(row) is None or _row_change_pct(row) < threshold)
+        ]
+        explanation = f"“涨幅过大”当前按涨跌幅 >= {threshold:.1f}% 视为过热处理。"
+        local_field_hint = "涨跌幅 / 风险点"
+    elif "只保留a股" in lowered or "只保留A股" in text:
+        action = "filter_a_share"
+        refined_rows = [row for row in rows if _is_a_share_row(row)]
+        explanation = "A 股识别当前按代码后缀 .SH / .SZ / .BJ 判断。"
+        local_field_hint = "代码"
+    else:
+        return None
+
+    if not refined_rows:
+        return StructuredResult(
+            summary="按这条追问条件过滤后，上一轮结果里没有保留下来的标的。",
+            table=ResultTable(
+                columns=["提示", "建议"],
+                rows=[{"提示": "本地过滤结果为空", "建议": "可以放宽条件，或补查更完整字段后再筛。"}],
+            ),
+            cards=[
+                ResultCard(
+                    type=CardType.CANDIDATE_SUMMARY,
+                    title="追问筛选",
+                    content=f"条件：{text}\n结果：本地过滤后没有命中标的。",
+                )
+            ],
+            facts=[
+                "这次追问直接基于上一轮结构化结果做本地过滤，没有重新调用外部数据。",
+                f"本地过滤使用字段：{local_field_hint}。",
+            ],
+            judgements=[explanation],
+            follow_ups=["放宽这轮过滤条件", "补充最近7天公告", "重新跑一轮更完整筛选"],
+            sources=[*snapshot.sources, SourceRef(skill="上一轮结果快照", query=text)],
+        )
+
+    retained_names = [
+        _row_text_value(row, "名称") or _row_text_value(row, "代码")
+        for row in refined_rows[:3]
+    ]
+    retained_preview = "、".join(name for name in retained_names if name) or "当前结果"
+
+    if action == "filter_trend":
+        summary = f"已基于上一轮结果保留趋势更稳的 {len(refined_rows)} 只，优先看 {retained_preview}。"
+    elif action == "filter_low_risk":
+        summary = f"已基于上一轮结果保留风险更低的 {len(refined_rows)} 只，当前更靠前的是 {retained_preview}。"
+    elif action == "sort_risk":
+        summary = f"已按回撤风险从低到高重排上一轮结果，当前更靠前的是 {retained_preview}。"
+    elif action == "sort_fundamental":
+        summary = f"已按结果表里的财务质量线索重排上一轮结果，当前更靠前的是 {retained_preview}。"
+    elif action == "drop_overextended":
+        summary = (
+            f"已从上一轮结果里去掉涨幅过大的标的，剩下 {len(refined_rows)} 只，优先看 {retained_preview}。"
+        )
+    else:
+        summary = f"已按追问条件保留 {len(refined_rows)} 只标的，当前更靠前的是 {retained_preview}。"
+
+    card_lines = [
+        f"条件：{text}",
+        f"原始数量：{original_count}",
+        f"当前数量：{len(refined_rows)}",
+        f"优先关注：{retained_preview}",
+    ]
+    if action == "sort_risk":
+        card_lines.append("排序方式：风险从低到高")
+    elif action == "sort_fundamental":
+        card_lines.append("排序方式：财务质量从强到弱")
+
+    follow_ups = _dedupe_string_list(
+        [
+            "补充最近7天公告",
+            "按回撤风险排序" if action != "sort_risk" else "只保留风险最低的",
+            "重新按财务质量排序" if action != "sort_fundamental" else "只保留趋势更稳的",
+            "去掉最近涨幅过大的" if action != "drop_overextended" else "只保留趋势更稳的",
+        ],
+        limit=3,
+    )
+
+    result = StructuredResult(
+        summary=summary,
+        table=ResultTable(columns=snapshot.table.columns, rows=refined_rows),
+        cards=[
+            ResultCard(
+                type=CardType.CANDIDATE_SUMMARY,
+                title="追问筛选",
+                content="\n".join(card_lines),
+                metadata={
+                    "action": action,
+                    "original_count": original_count,
+                    "current_count": len(refined_rows),
+                },
+            )
+        ],
+        facts=[
+            "这次追问直接基于上一轮结构化结果做本地过滤/排序，没有重新调用问财或外部行情。",
+            f"本地 refinement 使用字段：{local_field_hint}。",
+        ],
+        judgements=[explanation],
+        follow_ups=follow_ups,
+        sources=[*snapshot.sources, SourceRef(skill="上一轮结果快照", query=text)],
+    )
+    return _normalize_structured_result_output(result)
+
+
+def is_compare_follow_up(message: str) -> bool:
+    return any(keyword in message for keyword in FOLLOW_UP_COMPARE_KEYWORDS)
+
+
+def _looks_like_single_security_snapshot(snapshot: Optional[StructuredResult]) -> bool:
+    if snapshot is None:
+        return False
+
+    for card in snapshot.cards:
+        if _card_type_value(card) in {
+            CardType.OPERATION_GUIDANCE.value,
+            CardType.MULTI_HORIZON_ANALYSIS.value,
+            CardType.PORTFOLIO_CONTEXT.value,
+        }:
+            return True
+        subject = card.metadata.get("subject")
+        if isinstance(subject, str) and subject.strip():
+            return True
+
+    if snapshot.table and len(snapshot.table.rows) == 1:
+        row = snapshot.table.rows[0]
+        return any(key in row for key in ("名称", "股票简称", "代码", "股票代码"))
+
+    return False
+
+
+def _snapshot_subject(snapshot: Optional[StructuredResult]) -> Optional[str]:
+    if snapshot is None:
+        return None
+
+    for card in snapshot.cards:
+        subject = card.metadata.get("subject")
+        if isinstance(subject, str):
+            text = subject.strip()
+            if text:
+                return text
+
+    if snapshot.table and snapshot.table.rows:
+        row = snapshot.table.rows[0]
+        for key in ("名称", "股票简称", "股票名称", "代码", "股票代码"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text and text != "-":
+                return text
+
+    return None
+
+
+def _snapshot_candidate_names(snapshot: Optional[StructuredResult], *, limit: int = 3) -> List[str]:
+    if snapshot is None or snapshot.table is None:
+        return []
+
+    names: List[str] = []
+    seen: set[str] = set()
+    for row in snapshot.table.rows:
+        for key in ("名称", "股票简称", "股票名称", "代码", "股票代码"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if not text or text == "-" or text in seen:
+                continue
+            seen.add(text)
+            names.append(text)
+            break
+        if len(names) >= limit:
+            break
+    return names
+
+
+def rewrite_follow_up_message(
+    message: str,
+    parent_message: Optional[ChatMessageRecord],
+) -> str:
+    text = " ".join(message.strip().split())
+    if not text or parent_message is None:
+        return text
+
+    if _extract_security_subject(text):
+        return text
+
+    snapshot = parent_message.result_snapshot
+    if _looks_like_single_security_snapshot(snapshot):
+        subject = _snapshot_subject(snapshot)
+        if subject:
+            return f"{subject} {text}"
+
+    context_parts: List[str] = []
+    candidate_names = _snapshot_candidate_names(snapshot)
+    if candidate_names and any(marker in text for marker in ("刚才", "上面", "上一轮", "这几只", "那几只", "这些", "Top3", "top3")):
+        context_parts.append(f"上一轮候选：{'、'.join(candidate_names)}")
+    previous_query = " ".join((parent_message.rewritten_query or "").strip().split())
+    if "上一轮筛选条件：" in previous_query:
+        previous_query = previous_query.rsplit("上一轮筛选条件：", maxsplit=1)[-1].strip("； ")
+    if previous_query:
+        context_parts.append(f"上一轮筛选条件：{previous_query}")
+
+    if not context_parts:
+        return text
+    return f"{text}；{'；'.join(context_parts)}"
+
+
+def plan_follow_up_route(
+    message: str,
+    parent_message: Optional[ChatMessageRecord],
+    *,
+    session_mode: Optional[ChatMode],
+    profile: UserProfile,
+) -> tuple[ModeDetection, RoutePlan, str]:
+    contextual_message = rewrite_follow_up_message(message, parent_message)
+    parent_mode = (
+        parent_message.mode
+        if parent_message is not None and parent_message.mode not in {ChatMode.COMPARE, ChatMode.FOLLOW_UP}
+        else None
+    )
+    effective_session_mode = parent_mode or session_mode
+    detection = detect_mode(contextual_message, session_mode=effective_session_mode)
+
+    if detection.mode in {ChatMode.COMPARE, ChatMode.FOLLOW_UP}:
+        fallback_mode = effective_session_mode or ChatMode.GENERIC_DATA_QUERY
+        detection = ModeDetection(
+            mode=fallback_mode,
+            confidence=detection.confidence,
+            source=f"{detection.source}_follow_up_context",
+        )
+
+    snapshot = parent_message.result_snapshot if parent_message is not None else None
+    subject = _snapshot_subject(snapshot) if _looks_like_single_security_snapshot(snapshot) else None
+    if subject and detection.mode in {ChatMode.SHORT_TERM, ChatMode.SWING, ChatMode.MID_TERM_VALUE}:
+        route = _single_security_route(
+            subject,
+            detection.mode,
+            entry_price_focus=_is_entry_price_question(contextual_message),
+            holding_context_focus=_is_holding_question(contextual_message),
+        )
+        return detection, route, contextual_message
+
+    route = build_route(contextual_message, detection.mode, profile)
+    return detection, route, contextual_message
+
+
 def result_to_chat_response(
     *,
     session_id: str,
@@ -2525,6 +3190,7 @@ def result_to_chat_response(
     result: StructuredResult,
     skills_used: List[SkillUsage],
     status: ChatResponseStatus = ChatResponseStatus.COMPLETED,
+    user_visible_error: Optional[UserVisibleError] = None,
 ) -> ChatResponse:
     return ChatResponse(
         session_id=session_id,
@@ -2539,6 +3205,7 @@ def result_to_chat_response(
         follow_ups=result.follow_ups,
         sources=result.sources,
         status=status,
+        user_visible_error=user_visible_error,
     )
 
 

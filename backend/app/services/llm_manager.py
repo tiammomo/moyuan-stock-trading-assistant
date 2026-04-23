@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import socket
 from typing import Any, Dict, List, Optional, Protocol
 import urllib.error
 import urllib.request
@@ -70,6 +71,8 @@ class BaseJSONLLMProvider:
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, socket.timeout) as exc:
+            raise LLMProviderError(f"{error_prefix} 请求超时（{timeout}s）") from exc
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             raise LLMProviderError(f"{error_prefix} HTTP {exc.code}: {body[:300]}") from exc

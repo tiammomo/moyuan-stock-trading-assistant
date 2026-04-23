@@ -3,7 +3,14 @@ from typing import List, Optional
 
 from pydantic import Field
 
-from .common import ChatMode, ChatResponseStatus, ContractModel, SkillUsage, StructuredResult
+from .common import (
+    ChatMode,
+    ChatResponseStatus,
+    ContractModel,
+    SkillUsage,
+    StructuredResult,
+    UserVisibleError,
+)
 
 
 class SessionSummary(ContractModel):
@@ -26,6 +33,7 @@ class ChatMessageRecord(ContractModel):
     skills_used: List[SkillUsage] = Field(default_factory=list)
     result_snapshot: Optional[StructuredResult] = None
     status: Optional[ChatResponseStatus] = None
+    user_visible_error: Optional[UserVisibleError] = None
     created_at: datetime
 
 

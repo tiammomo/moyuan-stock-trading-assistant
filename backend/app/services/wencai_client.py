@@ -14,6 +14,9 @@ class WencaiClientError(RuntimeError):
 
 
 class WencaiClient:
+    upstream_retry_attempts = 2
+    upstream_retry_delay_seconds = 0.2
+
     def __init__(self) -> None:
         self.settings = get_settings()
 
@@ -47,6 +50,42 @@ class WencaiClient:
         except json.JSONDecodeError as exc:
             raise WencaiClientError("问财接口返回非 JSON 数据") from exc
 
+    def _chunks_info_text(self, result: Dict[str, Any]) -> Optional[str]:
+        chunks_info = result.get("chunks_info")
+        if isinstance(chunks_info, list):
+            text = " | ".join(str(item) for item in chunks_info if item)
+        elif isinstance(chunks_info, str):
+            text = chunks_info
+        else:
+            return None
+        compact = " ".join(text.split())
+        if not compact:
+            return None
+        return compact[:220] + ("..." if len(compact) > 220 else "")
+
+    def _status_error_message(self, result: Dict[str, Any], fallback: str) -> str:
+        status_msg = str(result.get("status_msg") or "").strip()
+        status_code = result.get("status_code")
+        chunks_info = self._chunks_info_text(result)
+
+        message = fallback
+        if status_msg:
+            message = f"{fallback}: {status_msg}"
+
+        details: List[str] = []
+        if status_code is not None:
+            details.append(f"status_code={status_code}")
+        if chunks_info:
+            details.append(f"chunks_info={chunks_info}")
+        if details:
+            message = f"{message}（{'；'.join(details)}）"
+        return message
+
+    def _should_retry_status(self, status_code: Any, attempt: int) -> bool:
+        if attempt + 1 >= self.upstream_retry_attempts:
+            return False
+        return isinstance(status_code, int) and status_code < 0
+
     def query2data(
         self,
         query: str,
@@ -57,21 +96,26 @@ class WencaiClient:
         expand_index: str = "true",
     ) -> Dict[str, Any]:
         started = time.perf_counter()
-        result = self._post_json(
-            "/v1/query2data",
-            {
-                "query": query,
-                "page": str(page),
-                "limit": str(limit),
-                "is_cache": is_cache,
-                "expand_index": expand_index,
-            },
-        )
-        status_code = result.get("status_code", 0)
-        if status_code != 0:
-            raise WencaiClientError(result.get("status_msg") or "问财接口返回错误")
-        result["_latency_ms"] = int((time.perf_counter() - started) * 1000)
-        return result
+        result: Dict[str, Any] = {}
+        for attempt in range(self.upstream_retry_attempts):
+            result = self._post_json(
+                "/v1/query2data",
+                {
+                    "query": query,
+                    "page": str(page),
+                    "limit": str(limit),
+                    "is_cache": is_cache,
+                    "expand_index": expand_index,
+                },
+            )
+            status_code = result.get("status_code", 0)
+            if status_code == 0:
+                result["_latency_ms"] = int((time.perf_counter() - started) * 1000)
+                return result
+            if not self._should_retry_status(status_code, attempt):
+                break
+            time.sleep(self.upstream_retry_delay_seconds)
+        raise WencaiClientError(self._status_error_message(result, "问财接口返回错误"))
 
     def comprehensive_search(
         self,
@@ -81,21 +125,26 @@ class WencaiClient:
         limit: int = 3,
     ) -> Dict[str, Any]:
         started = time.perf_counter()
-        result = self._post_json(
-            "/v1/comprehensive/search",
-            {
-                "channels": [channel],
-                "app_id": "AIME_SKILL",
-                "query": query,
-            },
-        )
-        status_code = result.get("status_code", 0)
-        if status_code != 0:
-            raise WencaiClientError(result.get("status_msg") or "问财综合搜索接口返回错误")
-        data = result.get("data") or []
-        result["data"] = data[:limit] if isinstance(data, list) else []
-        result["_latency_ms"] = int((time.perf_counter() - started) * 1000)
-        return result
+        result: Dict[str, Any] = {}
+        for attempt in range(self.upstream_retry_attempts):
+            result = self._post_json(
+                "/v1/comprehensive/search",
+                {
+                    "channels": [channel],
+                    "app_id": "AIME_SKILL",
+                    "query": query,
+                },
+            )
+            status_code = result.get("status_code", 0)
+            if status_code == 0:
+                data = result.get("data") or []
+                result["data"] = data[:limit] if isinstance(data, list) else []
+                result["_latency_ms"] = int((time.perf_counter() - started) * 1000)
+                return result
+            if not self._should_retry_status(status_code, attempt):
+                break
+            time.sleep(self.upstream_retry_delay_seconds)
+        raise WencaiClientError(self._status_error_message(result, "问财综合搜索接口返回错误"))
 
 
 wencai_client = WencaiClient()

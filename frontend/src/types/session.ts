@@ -3,6 +3,7 @@ import type {
   ChatResponseStatus,
   SkillUsage,
   StructuredResult,
+  UserVisibleError,
 } from "./common";
 
 export interface SessionSummary {
@@ -25,6 +26,7 @@ export interface ChatMessageRecord {
   skills_used: SkillUsage[];
   result_snapshot?: StructuredResult | null;
   status?: ChatResponseStatus | null;
+  user_visible_error?: UserVisibleError | null;
   created_at: string;
 }
 

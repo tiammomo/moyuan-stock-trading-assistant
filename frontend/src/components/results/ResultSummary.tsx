@@ -1,35 +1,24 @@
 "use client";
 
-import type { StructuredResult } from "@/types/common";
+import { UserVisibleErrorNotice } from "@/components/ui/UserVisibleErrorNotice";
+import type { StructuredResult, UserVisibleError } from "@/types/common";
 
 interface ResultSummaryProps {
   result: StructuredResult | null;
-  partialSummary?: string;
+  userVisibleError?: UserVisibleError | null;
 }
 
-export function ResultSummary({ result, partialSummary }: ResultSummaryProps) {
-  const summary = result?.summary || partialSummary || "";
+export function ResultSummary({ result, userVisibleError = null }: ResultSummaryProps) {
   const facts = result?.facts || [];
   const judgements = result?.judgements || [];
 
-  if (!summary && facts.length === 0 && judgements.length === 0) {
-    return (
-      <div className="text-center py-8 text-sm text-muted-foreground">
-        暂无分析结果
-      </div>
-    );
+  if (facts.length === 0 && judgements.length === 0 && !userVisibleError) {
+    return null;
   }
 
   return (
     <div className="space-y-4">
-      {summary && (
-        <div className="rounded-2xl border border-border/50 bg-muted/34 p-4 shadow-neo">
-          <div className="mb-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground/55">
-            Summary
-          </div>
-          <p className="font-display text-[18px] leading-8 whitespace-pre-wrap text-foreground/92">{summary}</p>
-        </div>
-      )}
+      {userVisibleError && <UserVisibleErrorNotice error={userVisibleError} />}
 
       {facts.length > 0 && (
         <div className="space-y-2">
