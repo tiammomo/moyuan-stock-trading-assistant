@@ -143,6 +143,8 @@ TanStack Query 负责：
 - `["watchlist"]`
 
 其中 `["watchlist"]` 还是结果表收藏态和候选池页面的统一真值来源；前端不能只靠局部组件 state 判断某只股票是否已入池。
+结果表 `☆` 入池和候选池手动添加共用一套自动填充规则：优先从 resolver 或行内字段推导 `行业 / 题材 / 模式` 标签；结果表入池还要自动带一条当前轮 assistant 的摘要或核心判断作为备注。
+对于历史遗留的空标签 / 空备注候选项，后端提供一次性 `watchlist backfill` 入口做幂等补齐：只补缺，不覆盖已有手填内容。
 
 Zustand 负责：
 
@@ -369,10 +371,19 @@ Zustand 负责：
 -> backend/main.py 识别候选池动作意图
 -> 若是上下文代词，则读取当前 session 最新 assistant result_snapshot
 -> watchlist_resolver / context rows 解析股票
+-> 前端基于 resolver 结果 / 当前表格行自动补齐 `行业 / 题材 / 模式` 标签
+-> 前端基于当前轮 assistant summary / judgements 或表格行 `核心逻辑` 生成候选池备注
 -> repository.find_watch_item_by_symbol() 去重
 -> repository.create_watch_item() 写入候选池
 -> assistant 返回候选池更新结果
 -> 前端以 `["watchlist"]` 刷新后的真实数据驱动星标收藏态，而不是用本地 toggle 假设成功
+
+历史候选池修复链路：
+-> backend `/api/watchlist/backfill`
+-> 逐条读取现有候选项
+-> watchlist_resolver 补行业 / 概念
+-> repository.latest_assistant_message() 尝试补一条摘要型备注
+-> repository.update_watch_item() 只回填缺失字段
 ```
 
 ### 6.2 追问 / 比较链路

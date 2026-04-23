@@ -26,6 +26,7 @@ from app.schemas import (
     UserProfileUpdate,
     UserVisibleError,
     UserVisibleErrorSeverity,
+    WatchlistBackfillResponse,
     WatchItemCreate,
     WatchStockResolveRequest,
     WatchItemUpdate,
@@ -51,6 +52,7 @@ from app.services.watchlist_chat import (
     detect_watchlist_add_intent,
     execute_watchlist_add_intent,
 )
+from app.services.watchlist_backfill import backfill_watchlist
 from app.services.watchlist_resolver import (
     WatchlistResolveError,
     normalize_tags,
@@ -1154,6 +1156,11 @@ def create_watch_item(data: WatchItemCreate):
     if existing:
         raise HTTPException(status_code=409, detail=f"{existing.name}（{existing.symbol}）已在候选池中")
     return repository.create_watch_item(prepared)
+
+
+@app.post("/api/watchlist/backfill", response_model=WatchlistBackfillResponse)
+def backfill_watchlist_items():
+    return backfill_watchlist(repository)
 
 
 @app.patch("/api/watchlist/{item_id}")

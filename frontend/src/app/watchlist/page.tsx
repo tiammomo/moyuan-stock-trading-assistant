@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/Dialog";
 import { toast } from "@/components/ui/Toast";
 import { useWatchlist } from "@/hooks/useWatchlist";
+import { buildAutoWatchTags, mergeWatchTags } from "@/lib/watchlistAutoFill";
 import {
   cn,
   BUCKET_LABELS,
@@ -60,6 +61,8 @@ export default function WatchlistPage() {
   const [stockQuery, setStockQuery] = useState("");
   const [resolvedCandidate, setResolvedCandidate] = useState<WatchStockCandidate | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [autoTags, setAutoTags] = useState<string[]>([]);
+  const [hiddenAutoTags, setHiddenAutoTags] = useState<string[]>([]);
 
   const [formData, setFormData] = useState<WatchItemCreate>({
     query: null,
@@ -70,6 +73,14 @@ export default function WatchlistPage() {
     note: null,
   });
   const [tagInput, setTagInput] = useState("");
+  const visibleAutoTags = useMemo(
+    () => autoTags.filter((tag) => !hiddenAutoTags.includes(tag)),
+    [autoTags, hiddenAutoTags]
+  );
+  const mergedTags = useMemo(
+    () => (editingItem ? formData.tags : mergeWatchTags(visibleAutoTags, formData.tags)),
+    [editingItem, formData.tags, visibleAutoTags]
+  );
 
   const buckets = ["全部", ...BUCKET_OPTIONS.map((b) => b.value)];
   const filteredItems = watchlist.filter((item) => {
@@ -95,6 +106,8 @@ export default function WatchlistPage() {
     setStockQuery("");
     setResolvedCandidate(null);
     setFormError(null);
+    setAutoTags([]);
+    setHiddenAutoTags([]);
     setTagInput("");
     setIsAddDialogOpen(true);
   };
@@ -111,12 +124,16 @@ export default function WatchlistPage() {
     setStockQuery(item.symbol);
     setResolvedCandidate(null);
     setFormError(null);
+    setAutoTags([]);
+    setHiddenAutoTags([]);
     setTagInput("");
     setIsAddDialogOpen(true);
   };
 
   const applyResolvedCandidate = (candidate: WatchStockCandidate, query: string) => {
     setResolvedCandidate(candidate);
+    setAutoTags(buildAutoWatchTags({ candidate, bucket: formData.bucket }));
+    setHiddenAutoTags([]);
     setFormData((current) => ({
       ...current,
       query,
@@ -139,6 +156,8 @@ export default function WatchlistPage() {
       return candidate;
     } catch (error) {
       setResolvedCandidate(null);
+      setAutoTags([]);
+      setHiddenAutoTags([]);
       setFormData((current) => ({
         ...current,
         query,
@@ -175,12 +194,17 @@ export default function WatchlistPage() {
           return;
         }
 
+        const generatedTags = buildAutoWatchTags({
+          candidate,
+          bucket: formData.bucket,
+        }).filter((tag) => !hiddenAutoTags.includes(tag));
+
         await createItemAsync({
           query: query || formData.query || null,
           symbol: candidate?.symbol || formData.symbol || null,
           name: candidate?.name || formData.name || null,
           bucket: formData.bucket,
-          tags: formData.tags,
+          tags: mergeWatchTags(generatedTags, formData.tags),
           note: formData.note,
         });
         const displayName = candidate?.name || formData.name || query;
@@ -212,13 +236,19 @@ export default function WatchlistPage() {
   };
 
   const addTag = () => {
-    if (tagInput.trim() && !formData.tags.includes(tagInput.trim())) {
-      setFormData({ ...formData, tags: [...formData.tags, tagInput.trim()] });
+    const nextTag = tagInput.trim();
+    if (nextTag && !mergedTags.includes(nextTag)) {
+      setHiddenAutoTags((current) => current.filter((tag) => tag !== nextTag));
+      setFormData({ ...formData, tags: [...formData.tags, nextTag] });
       setTagInput("");
     }
   };
 
   const removeTag = (tag: string) => {
+    if (!editingItem && visibleAutoTags.includes(tag) && !formData.tags.includes(tag)) {
+      setHiddenAutoTags((current) => (current.includes(tag) ? current : [...current, tag]));
+      return;
+    }
     setFormData({
       ...formData,
       tags: formData.tags.filter((t) => t !== tag),
@@ -371,6 +401,8 @@ export default function WatchlistPage() {
                         setStockQuery(e.target.value);
                         setResolvedCandidate(null);
                         setFormError(null);
+                        setAutoTags([]);
+                        setHiddenAutoTags([]);
                         setFormData((current) => ({
                           ...current,
                           query: e.target.value || null,
@@ -455,12 +487,16 @@ export default function WatchlistPage() {
               <Select
                 options={BUCKET_OPTIONS}
                 value={formData.bucket}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const bucket = e.target.value as WatchBucket;
                   setFormData({
                     ...formData,
-                    bucket: e.target.value as WatchBucket,
-                  })
-                }
+                    bucket,
+                  });
+                  if (!editingItem) {
+                    setAutoTags(buildAutoWatchTags({ candidate: resolvedCandidate, bucket }));
+                  }
+                }}
               />
             </div>
             <div>
@@ -483,10 +519,10 @@ export default function WatchlistPage() {
                 </Button>
               </div>
               <div className="flex flex-wrap gap-1">
-                {formData.tags.map((tag) => (
+                {mergedTags.map((tag) => (
                   <Badge
                     key={tag}
-                    variant="secondary"
+                    variant={visibleAutoTags.includes(tag) && !formData.tags.includes(tag) ? "outline" : "secondary"}
                     className="cursor-pointer"
                     onClick={() => removeTag(tag)}
                   >

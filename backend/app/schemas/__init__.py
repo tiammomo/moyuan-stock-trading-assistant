@@ -22,6 +22,7 @@ from .session import ChatMessageRecord, SessionDetail, SessionSummary
 from .template import TemplateCreate, TemplateRecord, TemplateUpdate
 from .watchlist import WatchItemCreate, WatchItemRecord, WatchItemUpdate
 from .watchlist import WatchStockCandidate, WatchStockResolveRequest
+from .watchlist import WatchlistBackfillItemResult, WatchlistBackfillResponse
 
 __all__ = [
     "CardType",
@@ -58,6 +59,8 @@ __all__ = [
     "WatchItemCreate",
     "WatchItemRecord",
     "WatchItemUpdate",
+    "WatchlistBackfillItemResult",
+    "WatchlistBackfillResponse",
     "WatchStockCandidate",
     "WatchStockResolveRequest",
 ]

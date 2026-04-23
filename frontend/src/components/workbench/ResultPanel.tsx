@@ -5,6 +5,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { useUIStore } from "@/stores/uiStore";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import { cn, normalizeStockSymbol } from "@/lib/utils";
+import { buildAutoWatchNote, buildAutoWatchTags } from "@/lib/watchlistAutoFill";
 import { ResultTable } from "@/components/results/ResultTable";
 import { ResultCards } from "@/components/results/ResultCards";
 import { ResultSummary } from "@/components/results/ResultSummary";
@@ -29,7 +30,7 @@ export function ResultPanel() {
   const [watchlistFeedback, setWatchlistFeedback] = useState<string | null>(null);
   const { currentResult, streamingStatus, messages } = useChatStore();
   const { resultViewMode, setResultViewMode } = useUIStore();
-  const { watchlist, createItemAsync } = useWatchlist();
+  const { watchlist, createItemAsync, resolveStockAsync } = useWatchlist();
 
   const latestAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
   const latestUserVisibleError = latestAssistantMessage?.user_visible_error ?? null;
@@ -85,12 +86,32 @@ export function ResultPanel() {
       return;
     }
     try {
+      let resolvedCandidate = null;
+      try {
+        resolvedCandidate = await resolveStockAsync({ query: normalizedSymbol || name });
+      } catch {
+        resolvedCandidate = null;
+      }
+
+      const tags = buildAutoWatchTags({
+        candidate: resolvedCandidate,
+        row,
+        mode: latestAssistantMessage?.mode,
+        bucket: mapModeToBucket(latestAssistantMessage?.mode),
+      });
+      const note = buildAutoWatchNote({
+        name,
+        row,
+        summary: latestAssistantMessage?.content,
+        judgements: latestAssistantMessage?.result_snapshot?.judgements || [],
+      });
+
       await createItemAsync({
         symbol,
         name,
         bucket: mapModeToBucket(latestAssistantMessage?.mode),
-        tags: [],
-        note: null,
+        tags,
+        note,
         source_session_id: latestAssistantMessage?.session_id || null,
       });
       setWatchlistFeedback(`✅ 已加入候选池：${name}（${symbol}）`);

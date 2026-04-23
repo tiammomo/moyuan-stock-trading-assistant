@@ -107,7 +107,7 @@ export function ResultTable({ table, onRowClick, onFavorite, favoriteSymbols }: 
                       </div>
                     </th>
                   ))}
-                  <th className="px-3 py-2.5 w-12"></th>
+                  <th className="sticky right-0 z-20 w-12 bg-gradient-to-r from-muted/90 to-muted/75 px-3 py-2.5 shadow-[-8px_0_16px_-14px_rgba(15,23,42,0.25)]"></th>
                 </tr>
               ))}
             </thead>
@@ -132,7 +132,13 @@ export function ResultTable({ table, onRowClick, onFavorite, favoriteSymbols }: 
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
-                    <td className="px-3 py-2.5">
+                    <td
+                      className={cn(
+                        "sticky right-0 z-10 px-3 py-2.5 shadow-[-8px_0_16px_-14px_rgba(15,23,42,0.25)] transition-colors",
+                        isEven ? "bg-card/96" : "bg-muted/85",
+                        "group-hover:bg-primary/8"
+                      )}
+                    >
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -142,7 +148,7 @@ export function ResultTable({ table, onRowClick, onFavorite, favoriteSymbols }: 
                           "w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all duration-200",
                           isFavorited
                             ? "text-yellow-500 bg-yellow-50 hover:bg-yellow-100"
-                            : "text-muted-foreground/30 hover:text-yellow-500 hover:bg-yellow-50 opacity-0 group-hover:opacity-100"
+                            : "text-muted-foreground/55 hover:text-yellow-500 hover:bg-yellow-50 opacity-70 group-hover:opacity-100"
                         )}
                       >
                         {isFavorited ? "★" : "☆"}

@@ -46,3 +46,22 @@ class WatchStockCandidate(ContractModel):
     industry: Optional[str] = None
     concepts: List[str] = Field(default_factory=list)
     source_query: str
+
+
+class WatchlistBackfillItemResult(ContractModel):
+    item_id: str
+    symbol: str
+    name: str
+    updated: bool = False
+    tags_added: List[str] = Field(default_factory=list)
+    note_added: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    note: Optional[str] = None
+    skipped_reason: Optional[str] = None
+
+
+class WatchlistBackfillResponse(ContractModel):
+    scanned_count: int
+    updated_count: int
+    unchanged_count: int
+    items: List[WatchlistBackfillItemResult] = Field(default_factory=list)

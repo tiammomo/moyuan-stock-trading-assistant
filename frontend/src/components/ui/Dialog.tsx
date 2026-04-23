@@ -10,31 +10,25 @@ interface DialogProps {
 }
 
 const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
+  if (!open) return null;
+
   return (
-    <dialog
-      open={open}
-      onClose={(e) => {
-        e.preventDefault();
-        onOpenChange?.(false);
-      }}
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm animate-fade-in"
+    <div
+      className="fixed inset-0 z-50 animate-fade-in"
+      role="dialog"
+      aria-modal="true"
+      onClick={() => onOpenChange?.(false)}
     >
-      {open && (
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="fixed inset-0 flex items-center justify-center p-4">
         <div
-          className="fixed inset-0 flex items-center justify-center p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) onOpenChange?.(false);
-          }}
+          className="relative z-10 max-h-[85vh] w-full max-w-lg overflow-hidden rounded-xl border border-border/50 bg-card shadow-neo animate-scale-in"
+          onClick={(e) => e.stopPropagation()}
         >
-          <div
-            className="relative bg-card rounded-xl shadow-neo border border-border/50 max-w-lg w-full max-h-[85vh] overflow-hidden animate-scale-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {children}
-          </div>
+          {children}
         </div>
-      )}
-    </dialog>
+      </div>
+    </div>
   );
 };
 
