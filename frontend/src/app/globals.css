@@ -1,0 +1,196 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Light theme (default) */
+  :root {
+    --background: 42 24% 97%;
+    --foreground: 216 24% 15%;
+    --card: 40 28% 99%;
+    --card-foreground: 216 24% 15%;
+    --primary: 167 56% 38%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 38 18% 93%;
+    --secondary-foreground: 216 16% 22%;
+    --muted: 40 14% 92%;
+    --muted-foreground: 215 10% 41%;
+    --accent: 40 82% 54%;
+    --accent-foreground: 216 24% 15%;
+    --destructive: 2 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 18% 84%;
+    --input: 215 18% 84%;
+    --ring: 167 56% 38%;
+    --radius: 10px;
+    --success: 142 62% 38%;
+    --warning: 40 88% 52%;
+    --info: 199 80% 44%;
+  }
+
+  /* Dark theme */
+  .dark {
+    --background: 216 28% 8%;
+    --foreground: 40 24% 92%;
+    --card: 218 24% 10%;
+    --card-foreground: 40 24% 92%;
+    --primary: 166 54% 50%;
+    --primary-foreground: 214 32% 9%;
+    --secondary: 219 18% 15%;
+    --secondary-foreground: 40 18% 88%;
+    --muted: 220 16% 13%;
+    --muted-foreground: 215 12% 61%;
+    --accent: 40 86% 58%;
+    --accent-foreground: 214 32% 9%;
+    --destructive: 2 72% 56%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 18% 18%;
+    --input: 217 18% 16%;
+    --ring: 166 54% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+    background-image:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.07), transparent 30%),
+      radial-gradient(circle at top right, hsl(var(--accent) / 0.08), transparent 28%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+  }
+
+  code, pre, .font-mono {
+    font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: "Noto Serif SC", "Noto Sans SC", serif;
+    letter-spacing: 0.02em;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring/50 ring-offset-1;
+  }
+}
+
+/* Minimalist scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.15);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.3);
+}
+
+/* Utility classes */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .shadow-minimal {
+    box-shadow: 0 1px 2px 0 hsl(var(--foreground) / 0.05);
+  }
+
+  .shadow-neo {
+    box-shadow:
+      0 1px 0 hsl(var(--foreground) / 0.04),
+      0 14px 40px -24px hsl(var(--background) / 0.9),
+      0 18px 50px -26px hsl(var(--foreground) / 0.22);
+  }
+
+  .shadow-soft {
+    box-shadow: 0 2px 8px -2px hsl(var(--foreground) / 0.06),
+                0 4px 16px -4px hsl(var(--foreground) / 0.08);
+  }
+
+  .shadow-lifted {
+    box-shadow: 0 4px 12px -2px hsl(var(--foreground) / 0.08),
+                0 8px 24px -4px hsl(var(--foreground) / 0.1);
+  }
+
+  .shadow-glow {
+    box-shadow: 0 0 12px -2px hsl(var(--primary) / 0.2);
+  }
+
+  .glow-text {
+    text-shadow: 0 0 8px hsl(var(--primary) / 0.4);
+  }
+
+  .border-minimal {
+    border-color: hsl(var(--border) / 0.6);
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.06) 1px, transparent 1px);
+    background-size: 26px 26px;
+    mask-image: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(255,255,255,0.1));
+  }
+}
+
+/* Animations */
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.25s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.15s ease-out;
+  }
+
+  .animate-glow-pulse {
+    animation: glowPulse 2.5s ease-in-out infinite;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 12px hsl(var(--primary) / 0.15); }
+  50% { box-shadow: 0 0 20px hsl(var(--primary) / 0.3); }
+}
+
+/* Selection */
+::selection {
+  background: hsl(var(--primary) / 0.15);
+}

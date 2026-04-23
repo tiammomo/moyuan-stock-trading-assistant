@@ -1,0 +1,74 @@
+{
+  "api_config": {
+    "base_url": "https://openapi.iwencai.com",
+    "api_path": "/v1/comprehensive/search",
+    "channels": ["investor"],
+    "app_id": "AIME_SKILL"
+  },
+  
+  "search_config": {
+    "default_limit": 20,
+    "default_output_format": "markdown",
+    "max_retries": 3,
+    "request_timeout": 30
+  },
+  
+  "data_processing": {
+    "max_summary_length": 500,
+    "max_participants": 5,
+    "max_topics": 3,
+    "date_formats": [
+      "%Y-%m-%d %H:%M:%S",
+      "%Y-%m-%d",
+      "%Y/%m/%d %H:%M:%S",
+      "%Y/%m/%d"
+    ]
+  },
+  
+  "activity_types": {
+    "调研": ["调研", "走访", "考察", "参观"],
+    "会议": ["会议", "交流会", "座谈会", "研讨会"],
+    "采访": ["采访", "访谈", "专访", "对话"],
+    "说明会": ["说明会", "业绩说明会", "发布会", "通报会"],
+    "路演": ["路演", "推介会", "投资者日"],
+    "其他": ["活动", "沟通", "交流"]
+  },
+  
+  "company_keywords": [
+    "茅台", "五粮液", "泸州老窖", "洋河", "山西汾酒",
+    "工商银行", "建设银行", "农业银行", "中国银行", "招商银行",
+    "中国平安", "中国人寿", "中国太保", "新华保险",
+    "中信证券", "海通证券", "国泰君安", "华泰证券",
+    "腾讯", "阿里巴巴", "百度", "京东", "美团",
+    "华为", "小米", "中兴", "科大讯飞", "海康威视",
+    "宁德时代", "比亚迪", "隆基绿能", "通威股份",
+    "恒瑞医药", "药明康德", "迈瑞医疗", "长春高新"
+  ],
+  
+  "institution_keywords": [
+    "基金", "证券", "保险", "银行", "资管", "信托",
+    "投资", "资本", "私募", "公募", "券商", "研究所",
+    "分析师", "研究员", "机构", "投资者"
+  ],
+  
+  "topic_keywords": [
+    "业绩", "增长", "利润", "收入", "营收",
+    "市场", "竞争", "战略", "规划", "发展",
+    "产品", "技术", "研发", "创新", "升级",
+    "行业", "政策", "监管", "环境", "趋势",
+    "风险", "挑战", "机遇", "展望", "预期"
+  ],
+  
+  "environment_variables": {
+    "api_key": "IWENCAI_API_KEY",
+    "http_proxy": "HTTP_PROXY",
+    "https_proxy": "HTTPS_PROXY"
+  },
+  
+  "cli_config": {
+    "program_name": "investor-search",
+    "version": "1.0.0",
+    "description": "investor搜索工具 - 搜索A股上市公司投资者关系相关内容",
+    "epilog": "使用示例:\n  investor-search \"贵州茅台投资者关系活动\"\n  investor-search \"人工智能公司调研\" --company \"科大讯飞\" --date-start \"2024-01-01\"\n  investor-search \"新能源行业路演\" --output \"results.csv\" --format csv\n  investor-search --input-file \"queries.txt\" --output-dir \"results/\""
+  }
+}
