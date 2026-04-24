@@ -1,4 +1,4 @@
-# moyuan-wencai
+# moyuan-stock-trading-assistant
 
 基于问财 Skills、FastAPI、Next.js 和 LangGraph 的个人理财助手，面向 A 股场景，提供自然语言问答、候选池管理、单股分析、模拟持仓联动，以及 GPT 主链路 + MiniMax fallback 的分析增强。
 

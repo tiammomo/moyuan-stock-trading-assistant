@@ -37,3 +37,6 @@ __pycache__/
 # Logs and local locks
 *.log
 skills/.skills_store_lock.json
+
+# Local scratch files
+temp/

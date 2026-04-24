@@ -57,16 +57,13 @@ export function MessageFlow() {
       <div className="flex-1 overflow-y-auto px-8 py-10">
         <div className="mx-auto w-full max-w-6xl">
           <div className="rounded-[32px] border border-border/50 bg-card/78 p-7 shadow-neo">
-            <div className="text-[12px] uppercase tracking-[0.24em] text-muted-foreground/56">
-              Quick Start
-            </div>
-            <div className="mt-3 max-w-3xl font-display text-[32px] leading-[1.45] text-foreground/92">
+            <div className="mx-auto max-w-3xl text-center font-display text-[32px] leading-[1.45] text-foreground/92">
               直接开始一轮新的问财分析
             </div>
-            <p className="mt-4 max-w-4xl text-[15px] leading-8 text-muted-foreground">
+            <p className="mx-auto mt-4 max-w-4xl text-center text-[15px] leading-8 text-muted-foreground">
               点击下面任一问题会直接发起问答。适合快速进入市场方向、短线观察股、财报与 K 线、当前持仓处理这几类高频场景。
             </p>
-            <div className="mt-6 grid gap-3 md:grid-cols-2">
+            <div className="mx-auto mt-6 grid max-w-5xl gap-3 md:grid-cols-2">
               {QUICK_START_PROMPTS.map((suggestion) => (
                 <button
                   key={suggestion}
@@ -74,7 +71,7 @@ export function MessageFlow() {
                   disabled={isSubmitting}
                   onClick={() => void handleQuickStart(suggestion)}
                   className={cn(
-                    "rounded-2xl border border-border/50 bg-muted/32 px-5 py-4 text-left text-[15px] leading-7 text-muted-foreground transition-all",
+                    "rounded-2xl border border-border/50 bg-muted/32 px-5 py-4 text-center text-[15px] leading-7 text-muted-foreground transition-all",
                     "hover:border-primary/30 hover:bg-primary/8 hover:text-primary",
                     "disabled:cursor-not-allowed disabled:opacity-60"
                   )}
