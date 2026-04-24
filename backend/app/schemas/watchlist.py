@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import Field
 
-from .common import ContractModel, WatchBucket
+from .common import ContractModel, JsonValue, WatchBucket
 
 
 class WatchItemCreate(ContractModel):
@@ -65,3 +65,111 @@ class WatchlistBackfillResponse(ContractModel):
     updated_count: int
     unchanged_count: int
     items: List[WatchlistBackfillItemResult] = Field(default_factory=list)
+
+
+class WatchMonitorEvent(ContractModel):
+    id: str
+    symbol: str
+    name: str
+    bucket: WatchBucket
+    rule_id: Optional[str] = None
+    rule_name: Optional[str] = None
+    event_type: str
+    severity: str = "info"
+    title: str
+    summary: str
+    reasons: List[str] = Field(default_factory=list)
+    metrics: Dict[str, JsonValue] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class WatchMonitorStatus(ContractModel):
+    enabled: bool = True
+    running: bool = False
+    market_phase: str = "closed"
+    interval_seconds: int
+    watchlist_count: int = 0
+    event_count: int = 0
+    last_scan_at: Optional[datetime] = None
+    last_event_at: Optional[datetime] = None
+    last_scan_duration_ms: Optional[int] = None
+    last_error: Optional[str] = None
+
+
+class WatchMonitorScanResponse(ContractModel):
+    scanned_count: int
+    triggered_count: int
+    skipped_count: int = 0
+    events: List[WatchMonitorEvent] = Field(default_factory=list)
+    status: WatchMonitorStatus
+
+
+class MonitorRuleCondition(ContractModel):
+    type: Literal[
+        "latest_price",
+        "change_pct",
+        "volume_ratio",
+        "weibi",
+        "amount",
+        "volume",
+        "turnover_pct",
+        "amplitude_pct",
+        "waipan",
+        "neipan",
+        "weicha",
+        "pb",
+        "pe_dynamic",
+        "total_market_value",
+        "float_market_value",
+    ]
+    op: Literal[">", ">=", "<", "<=", "between"]
+    value: JsonValue
+
+
+class MonitorRuleConditionGroup(ContractModel):
+    op: Literal["and", "or"] = "or"
+    items: List[MonitorRuleCondition] = Field(default_factory=list)
+
+
+class MonitorRuleCreate(ContractModel):
+    item_id: str
+    rule_name: str
+    enabled: bool = True
+    severity: Literal["info", "warning"] = "info"
+    condition_group: MonitorRuleConditionGroup
+    market_hours_mode: Literal["trading_only", "always"] = "trading_only"
+    repeat_mode: Literal["repeat", "once"] = "repeat"
+    expire_at: Optional[datetime] = None
+    cooldown_minutes: int = Field(default=30, ge=0, le=1440)
+    max_triggers_per_day: int = Field(default=5, ge=0, le=999)
+
+
+class MonitorRuleUpdate(ContractModel):
+    rule_name: Optional[str] = None
+    enabled: Optional[bool] = None
+    severity: Optional[Literal["info", "warning"]] = None
+    condition_group: Optional[MonitorRuleConditionGroup] = None
+    market_hours_mode: Optional[Literal["trading_only", "always"]] = None
+    repeat_mode: Optional[Literal["repeat", "once"]] = None
+    expire_at: Optional[datetime] = None
+    cooldown_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
+    max_triggers_per_day: Optional[int] = Field(default=None, ge=0, le=999)
+
+
+class MonitorRuleRecord(ContractModel):
+    id: str
+    item_id: str
+    symbol: str
+    name: str
+    bucket: WatchBucket
+    rule_name: str
+    enabled: bool = True
+    severity: Literal["info", "warning"] = "info"
+    condition_group: MonitorRuleConditionGroup
+    market_hours_mode: Literal["trading_only", "always"] = "trading_only"
+    repeat_mode: Literal["repeat", "once"] = "repeat"
+    expire_at: Optional[datetime] = None
+    cooldown_minutes: int = Field(default=30, ge=0, le=1440)
+    max_triggers_per_day: int = Field(default=5, ge=0, le=999)
+    created_at: datetime
+    updated_at: datetime

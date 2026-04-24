@@ -26,6 +26,16 @@ export function formatTimestamp(isoString: string): string {
   });
 }
 
+export function formatDateTime(isoString: string): string {
+  const date = new Date(isoString);
+  return date.toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function formatLatency(ms: number | null): string {
   if (ms === null) return "-";
   if (ms < 1000) return `${ms}ms`;

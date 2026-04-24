@@ -7,6 +7,8 @@ const pageTitles: Record<string, string> = {
   "/": "研究工作台",
   "/templates": "模板中心",
   "/watchlist": "候选池",
+  "/portfolio": "持仓账户",
+  "/monitor": "盯盘区",
   "/settings": "系统设置",
 };
 

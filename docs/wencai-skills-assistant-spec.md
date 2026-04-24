@@ -681,8 +681,16 @@ data: {"event":"mode_detected","emitted_at":"2026-04-23T01:00:00Z","mode":"short
 - `GET /api/watchlist`
 - `POST /api/watchlist/resolve`
 - `POST /api/watchlist`
+- `POST /api/watchlist/backfill`
 - `PATCH /api/watchlist/{item_id}`
 - `DELETE /api/watchlist/{item_id}`
+- `GET /api/monitor/status`
+- `GET /api/monitor/rules`
+- `POST /api/monitor/rules`
+- `PATCH /api/monitor/rules/{rule_id}`
+- `DELETE /api/monitor/rules/{rule_id}`
+- `GET /api/monitor/events`
+- `POST /api/monitor/scan`
 
 `WatchStockResolveRequest`：
 
@@ -726,6 +734,10 @@ data: {"event":"mode_detected","emitted_at":"2026-04-23T01:00:00Z","mode":"short
 - `POST /api/watchlist/resolve` 必须支持股票名称、6 位代码、带交易所后缀代码。
 - `POST /api/watchlist` 在 `symbol` 或 `name` 缺失时，后端必须自动走解析链路补全。
 - `POST /api/watchlist/backfill` 必须提供一次性批量补齐能力，用于给旧候选项回填缺失的标签和备注。
+- `GET /api/monitor/rules` 必须在返回规则列表前自动执行 default seed，确保每只候选股至少有一条可编辑规则。
+- `POST /api/monitor/rules` 只允许为当前候选池里的股票创建规则；若 `item_id` 不存在，必须返回 `404`。
+- `PATCH /api/monitor/rules/{rule_id}` 第一版只允许更新规则内容，不支持改绑到另一只股票。
+- `DELETE /api/monitor/rules/{rule_id}` 删除后允许下一次 default seed 重新补出默认规则。
 - 解析完成后，后端必须统一返回标准化 `symbol`，例如 `600673.SH`。
 - 候选池去重键是 `symbol`。若同一股票已存在，`POST /api/watchlist` 必须返回 `409 Conflict`。
 - `tags` 必须在后端去空白、去重。
@@ -764,6 +776,82 @@ data: {"event":"mode_detected","emitted_at":"2026-04-23T01:00:00Z","mode":"short
   "ok": true
 }
 ```
+
+`WatchMonitorStatus`：
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "market_phase": "open",
+  "interval_seconds": 60,
+  "watchlist_count": 3,
+  "event_count": 5,
+  "last_scan_at": "2026-04-24T02:10:00Z",
+  "last_event_at": "2026-04-24T02:08:00Z",
+  "last_scan_duration_ms": 923,
+  "last_error": null
+}
+```
+
+`WatchMonitorEvent`：
+
+```json
+{
+  "id": "me_001",
+  "symbol": "600111.SH",
+  "name": "北方稀土",
+  "bucket": "short_term",
+  "rule_id": "wr_001",
+  "rule_name": "默认异动提醒",
+  "event_type": "price_move",
+  "severity": "warning",
+  "title": "北方稀土 命中规则：默认异动提醒",
+  "summary": "命中规则「默认异动提醒」：涨跌幅 <= -3%、委比 >= 20%；现价 47.16，涨跌幅 -5.96%，量比 1.52，委比 43.37%。",
+  "reasons": ["change_pct", "weibi"],
+  "metrics": {
+    "latest_price": 47.16,
+    "change_pct": -5.96,
+    "volume_ratio": 1.52,
+    "weibi": 43.37,
+    "bucket": "short_term"
+  },
+  "created_at": "2026-04-24T02:08:00Z"
+}
+```
+
+盯盘运行时约束：
+
+- 第一版盯盘 runtime 以候选池 `watchlist` 为唯一股票真值来源，不另建第二套监控股票池。
+- 后端必须提供分钟级后台扫描能力，默认扫描间隔 `60s`。
+- 后端必须在非交易时段自动跳过后台扫描；但 `POST /api/monitor/scan` 手动扫描允许强制执行。
+- 后端必须维护独立的 `watch_rules.json`，作为盯盘规则的声明式真值文件；每条规则必须绑定单只候选股 `item_id`。
+- 后端必须维护 `watch_monitor_state.json` 的 `rules` 运行时状态，用于记录每条规则的：
+  - `last_trigger_at`
+  - `trigger_date`
+  - `trigger_count_today`
+  - `last_event_fingerprint`
+- 第一版必须自动为每只候选池股票 seed 一条 `默认异动提醒`；默认条件组沿用：
+  - `change_pct >= 3`
+  - `change_pct <= -3`
+  - `volume_ratio >= 1.8`
+  - `weibi >= 20`
+  - `weibi <= -20`
+- 第一版规则条件类型只支持：
+  - `latest_price`
+  - `change_pct`
+  - `volume_ratio`
+  - `weibi`
+- 第一版规则运算符只支持：
+  - `>`
+  - `>=`
+  - `<`
+  - `<=`
+  - `between`
+- 第一版盯盘事件必须带上 `symbol / name / bucket / rule_id / rule_name / event_type / reasons / metrics / created_at`。
+- 盯盘事件必须按规则级冷却和每日上限控制，不能在短时间内重复刷出同一条规则事件。
+- 第一版盯盘事件先沉淀到本地事件流，不要求直接接入 Telegram / 飞书 / 企业微信等外部通知渠道。
+- 第一版盯盘事件不要求自动插入聊天消息；前端先在独立盯盘区页稳定展示状态、规则和事件流。
 
 ## 6. 后端行为契约
 
@@ -1066,6 +1154,7 @@ Provider 管理位置：`backend/app/services/llm_manager.py`。
 - `/`：工作台。
 - `/templates`：模板中心。
 - `/watchlist`：候选池。
+- `/monitor`：盯盘区。
 - `/settings`：设置。
 
 工作台必须保持三栏结构：
@@ -1255,7 +1344,43 @@ Tab 固定为：
 
 ### 7.8 WatchlistPage
 
-组件：`frontend/src/app/watchlist/page.tsx`。
+组件：`frontend/src/app/monitor/page.tsx`。
+
+盯盘区页面约束：
+
+- `盯盘区` 必须是左侧导航里的独立页面入口，不能继续和候选池页混排。
+- 页面顶部必须展示 `实时盯盘` 状态卡，至少包含：
+  - 交易时段 / 非交易时段
+  - 扫描间隔
+  - 候选池数量
+  - 累计事件数
+  - 最近扫描时间
+- 页面必须展示 `提醒规则` 区块，且支持：
+  - 列出所有当前规则
+  - 新增规则
+  - 编辑规则
+  - 删除规则
+- 第一版规则表单字段必须至少包括：
+  - 绑定股票
+  - 规则名称
+  - 触发逻辑 `任一满足 / 全部满足`
+  - 动态条件列表
+  - 状态 `启用 / 停用`
+  - 严重级别 `普通 / 重点`
+  - 冷却时间（分钟）
+  - 每日触发上限
+- 页面必须展示 `最近盯盘事件` 列表。
+- `实时盯盘` 状态卡、`提醒规则`、`最近盯盘事件` 在盯盘区页必须按单列垂直堆叠：
+  - 状态卡在上
+  - 规则区在中
+  - 事件流在下
+- 前端展示 `event_type` 和 `reasons` badge 时必须使用中文文案：
+  - 例如 `price_move -> 价格异动`
+  - `orderbook_bias -> 盘口异动 / 盘口偏移`
+- 前端展示规则条件时必须把 `latest_price / change_pct / volume_ratio / weibi` 转成中文字段名，不能直接向用户暴露英文类型。
+- 页面必须提供 `立即扫描` 入口，触发 `POST /api/monitor/scan`。
+- 盯盘事件列表第一版展示在独立盯盘区页即可，不要求先塞进工作台对话流。
+- 若后台扫描最近一次失败，错误信息必须在盯盘区页稳定可见，不能只打印到控制台。
 
 添加股票交互约束：
 
@@ -1284,6 +1409,8 @@ Tab 固定为：
 - `["sessions"]`
 - `["session", id]`
 - `["meta-status"]`
+- `["watch-monitor", "status"]`
+- `["watch-monitor", "events"]`
 - `["templates"]`
 - `["watchlist"]`
 

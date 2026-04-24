@@ -139,12 +139,15 @@ TanStack Query 负责：
 - `["sessions"]`
 - `["session", id]`
 - `["meta-status"]`
+- `["watch-monitor", "status"]`
+- `["watch-monitor", "events"]`
 - `["templates"]`
 - `["watchlist"]`
 
 其中 `["watchlist"]` 还是结果表收藏态和候选池页面的统一真值来源；前端不能只靠局部组件 state 判断某只股票是否已入池。
 结果表 `☆` 入池和候选池手动添加共用一套自动填充规则：优先从 resolver 或行内字段推导 `行业 / 题材 / 模式` 标签；结果表入池还要自动带一条当前轮 assistant 的摘要或核心判断作为备注。
 对于历史遗留的空标签 / 空备注候选项，后端提供一次性 `watchlist backfill` 入口做幂等补齐：只补缺，不覆盖已有手填内容。
+`["watch-monitor", "status"]` 和 `["watch-monitor", "events"]` 属于后台盯盘 runtime 的只读展示层缓存，不允许前端自己维护一份平行事件流。
 
 Zustand 负责：
 
@@ -188,6 +191,7 @@ Zustand 负责：
 | `backend/app/services/llm_account_pool.py` | LLM 账号池 adapter factory、账号级轮询和失败切换 |
 | `backend/app/services/sim_trading_client.py` | 模拟炒股账户、持仓上下文和只读联动 |
 | `backend/app/services/watchlist_resolver.py` | 候选池股票解析、代码标准化和去重前校验 |
+| `backend/app/services/watch_monitor.py` | 候选池驱动的分钟级盯盘 runtime、事件门禁和本地事件流 |
 | `backend/app/services/repository.py` | 用户画像、会话、消息、模板、候选池仓储 |
 | `backend/app/services/json_store.py` | 原子 JSON 文件存储 |
 | `backend/app/services/wencai_client.py` | 问财请求和返回适配 |
@@ -218,6 +222,25 @@ Zustand 负责：
 - `build_route()`：技能路由
 - `execute_plan()`：逐步执行技能计划
 - `result_to_chat_response()`：把结构化结果包装成 `ChatResponse`
+
+### 5.4 盯盘 Runtime
+
+第一版实时盯盘不复刻 PanWatch 的整套多账户 Agent 平台，而是落成一个更轻量的 runtime：
+
+- 股票来源：直接复用 `watchlist`
+- 数据源：复用 `local_market_skill_client` 的实时快照
+- 门禁：每只股票的声明式规则组 `watch_rules.json`
+- 持久化：
+  - `watch_rules.json`：规则声明
+  - `watch_monitor_events.json`：事件流
+  - `watch_monitor_state.json`：runtime 状态、symbol 最近快照、rule 冷却/日上限状态
+- 输出：`/api/monitor/status`、`/api/monitor/rules`、`/api/monitor/events`、`/api/monitor/scan`
+
+这样做的原因：
+
+- 先把“候选池 -> 后台扫描 -> 事件流 -> 页面可见”闭环跑通
+- 不在当前阶段引入第二套监控股票池
+- 不提前把项目推进到 SQLAlchemy / APScheduler / 多通知渠道复杂度
 - 结果聚合、主表选择、卡片生成和失败兜底
 - 单股咨询分支：
   - `_extract_security_subject()`
@@ -385,6 +408,38 @@ Zustand 负责：
 -> repository.latest_assistant_message() 尝试补一条摘要型备注
 -> repository.update_watch_item() 只回填缺失字段
 ```
+
+### 6.1.2 候选池盯盘链路
+
+```text
+应用启动
+-> watch_monitor runtime 启动后台循环
+-> 定时读取 repository.list_watchlist()
+-> watch_rule_store.ensure_default_rules() 补齐默认规则
+-> 对每只候选股抓取同花顺实时快照
+-> 读取该股票启用中的 monitor rules
+-> 对每条规则做条件评估
+-> 通过规则级冷却 / 日上限检查
+-> 命中时写入本地 monitor events，并更新 rule runtime state
+-> 更新 monitor runtime status
+-> 前端用 ["watch-monitor", "status"] / ["watch-monitor", "rules"] / ["watch-monitor", "events"] 拉取展示
+-> 用户点击“立即扫描”时走 POST /api/monitor/scan 强制执行一轮
+```
+
+第一版有意不做的部分：
+
+- 不自动发外部通知
+- 不自动写入聊天消息
+- 不把 watchlist 替换成单独的 holdings / alerts 模型
+
+第一版盯盘区从候选池页拆出，作为独立页面存在：
+
+- 候选池页只负责“看池子 / 管池子”
+- 盯盘区页负责“后台扫描状态 + 规则管理 + 事件流”
+- 盯盘区页内部保持单列布局：
+  - `实时盯盘` 状态卡在上
+  - `提醒规则` 在中
+  - `最近盯盘事件` 在下
 
 ### 6.2 追问 / 比较链路
 

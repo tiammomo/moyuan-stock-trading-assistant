@@ -127,6 +127,12 @@ class Settings:
         "ANTHROPIC_ACCOUNT_POOL_JSON",
         "MINIMAX_ACCOUNT_POOL_JSON",
     )
+    watch_monitor_enabled: bool = _env_bool("WATCH_MONITOR_ENABLED", default=True)
+    watch_monitor_interval_seconds: int = int(_env("WATCH_MONITOR_INTERVAL_SECONDS", default="60"))
+    watch_monitor_event_cooldown_seconds: int = int(
+        _env("WATCH_MONITOR_EVENT_COOLDOWN_SECONDS", default="900")
+    )
+    watch_monitor_max_events: int = int(_env("WATCH_MONITOR_MAX_EVENTS", default="200"))
     cors_origins: tuple[str, ...] = (
         "http://localhost:3000",
         "http://127.0.0.1:3000",

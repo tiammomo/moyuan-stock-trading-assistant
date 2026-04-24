@@ -90,7 +90,7 @@
 - Spec
 - Architecture
 - 工作台三栏布局
-- 页面路由：`/`、`/templates`、`/watchlist`、`/settings`
+- 页面路由：`/`、`/templates`、`/watchlist`、`/monitor`、`/settings`
 - Pydantic / TypeScript 模型对齐
 
 退出标准：

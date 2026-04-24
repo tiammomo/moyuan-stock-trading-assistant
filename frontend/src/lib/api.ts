@@ -128,6 +128,52 @@ export async function deleteWatchItem(id: string) {
   return fetchApi<void>(`/api/watchlist/${id}`, { method: "DELETE" });
 }
 
+export async function getWatchMonitorStatus() {
+  return fetchApi<import("@/types/watchlist").WatchMonitorStatus>("/api/monitor/status");
+}
+
+export async function getWatchMonitorRules(itemId?: string) {
+  const suffix = itemId ? `?item_id=${encodeURIComponent(itemId)}` : "";
+  return fetchApi<import("@/types/watchlist").MonitorRuleRecord[]>(`/api/monitor/rules${suffix}`);
+}
+
+export async function createWatchMonitorRule(
+  data: import("@/types/watchlist").MonitorRuleCreate
+) {
+  return fetchApi<import("@/types/watchlist").MonitorRuleRecord>("/api/monitor/rules", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateWatchMonitorRule(
+  id: string,
+  data: import("@/types/watchlist").MonitorRuleUpdate
+) {
+  return fetchApi<import("@/types/watchlist").MonitorRuleRecord>(`/api/monitor/rules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteWatchMonitorRule(id: string) {
+  return fetchApi<{ ok: boolean }>(`/api/monitor/rules/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getWatchMonitorEvents(limit = 20) {
+  return fetchApi<import("@/types/watchlist").WatchMonitorEvent[]>(
+    `/api/monitor/events?limit=${limit}`
+  );
+}
+
+export async function triggerWatchMonitorScan() {
+  return fetchApi<import("@/types/watchlist").WatchMonitorScanResponse>("/api/monitor/scan", {
+    method: "POST",
+  });
+}
+
 // Templates
 export async function getTemplates() {
   return fetchApi<import("@/types/template").TemplateRecord[]>("/api/templates");
@@ -154,4 +200,71 @@ export async function updateTemplate(
 
 export async function deleteTemplate(id: string) {
   return fetchApi<void>(`/api/templates/${id}`, { method: "DELETE" });
+}
+
+// Portfolio
+export async function getPortfolioSummary() {
+  return fetchApi<import("@/types/portfolio").PortfolioSummary>("/api/portfolio/summary");
+}
+
+export async function getPortfolioAccounts() {
+  return fetchApi<import("@/types/portfolio").PortfolioAccountRecord[]>("/api/portfolio/accounts");
+}
+
+export async function createPortfolioAccount(
+  data: import("@/types/portfolio").PortfolioAccountCreate
+) {
+  return fetchApi<import("@/types/portfolio").PortfolioAccountRecord>("/api/portfolio/accounts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePortfolioAccount(
+  id: string,
+  data: import("@/types/portfolio").PortfolioAccountUpdate
+) {
+  return fetchApi<import("@/types/portfolio").PortfolioAccountRecord>(`/api/portfolio/accounts/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePortfolioAccount(id: string) {
+  return fetchApi<{ ok: boolean }>(`/api/portfolio/accounts/${id}`, { method: "DELETE" });
+}
+
+export async function createPortfolioPosition(
+  data: import("@/types/portfolio").PortfolioPositionCreate
+) {
+  return fetchApi<import("@/types/portfolio").PortfolioPositionRecord>("/api/portfolio/positions", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updatePortfolioPosition(
+  id: string,
+  data: import("@/types/portfolio").PortfolioPositionUpdate
+) {
+  return fetchApi<import("@/types/portfolio").PortfolioPositionRecord>(`/api/portfolio/positions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePortfolioPosition(id: string) {
+  return fetchApi<{ ok: boolean }>(`/api/portfolio/positions/${id}`, { method: "DELETE" });
+}
+
+export async function importPortfolioScreenshot(
+  data: import("@/types/portfolio").PortfolioScreenshotImportRequest
+) {
+  return fetchApi<import("@/types/portfolio").PortfolioScreenshotImportResponse>(
+    "/api/portfolio/import-screenshot",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
 }

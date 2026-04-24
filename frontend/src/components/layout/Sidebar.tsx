@@ -9,6 +9,8 @@ const navItems = [
   { href: "/", label: "工作台", icon: "⌨️" },
   { href: "/templates", label: "模板中心", icon: "📝" },
   { href: "/watchlist", label: "候选池", icon: "⭐" },
+  { href: "/portfolio", label: "持仓账户", icon: "💼" },
+  { href: "/monitor", label: "盯盘区", icon: "📡" },
   { href: "/settings", label: "设置", icon: "⚙️" },
 ];
 

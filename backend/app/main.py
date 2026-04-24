@@ -23,9 +23,24 @@ from app.schemas import (
     SessionSummary,
     TemplateCreate,
     TemplateUpdate,
+    MonitorRuleCreate,
+    MonitorRuleRecord,
+    MonitorRuleUpdate,
+    PortfolioAccountCreate,
+    PortfolioAccountRecord,
+    PortfolioScreenshotImportRequest,
+    PortfolioScreenshotImportResponse,
+    PortfolioAccountUpdate,
+    PortfolioPositionCreate,
+    PortfolioPositionRecord,
+    PortfolioPositionUpdate,
+    PortfolioSummary,
     UserProfileUpdate,
     UserVisibleError,
     UserVisibleErrorSeverity,
+    WatchMonitorEvent,
+    WatchMonitorScanResponse,
+    WatchMonitorStatus,
     WatchlistBackfillResponse,
     WatchItemCreate,
     WatchStockResolveRequest,
@@ -46,6 +61,11 @@ from app.services.chat_engine import (
 )
 from app.services.llm_manager import llm_provider_manager
 from app.services.langgraph_stock_agent import langgraph_stock_agent
+from app.services.portfolio_screenshot_importer import (
+    PortfolioScreenshotImportError,
+    portfolio_screenshot_importer,
+)
+from app.services.portfolio_store import portfolio_store
 from app.services.repository import repository, short_title
 from app.services.skill_registry import skill_registry
 from app.services.watchlist_chat import (
@@ -53,6 +73,8 @@ from app.services.watchlist_chat import (
     execute_watchlist_add_intent,
 )
 from app.services.watchlist_backfill import backfill_watchlist
+from app.services.watch_monitor import watch_monitor_service
+from app.services.watch_rule_store import WatchRuleStoreError, watch_rule_store
 from app.services.watchlist_resolver import (
     WatchlistResolveError,
     normalize_tags,
@@ -72,6 +94,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def start_background_services() -> None:
+    watch_rule_store.ensure_default_rules(repository.list_watchlist())
+    watch_monitor_service.start()
+
+
+@app.on_event("shutdown")
+async def stop_background_services() -> None:
+    await watch_monitor_service.shutdown()
 
 
 def sse_payload(event: str, data: Dict[str, Any]) -> str:
@@ -1132,6 +1165,75 @@ def delete_template(template_id: str):
     return {"ok": repository.delete_template(template_id)}
 
 
+@app.get("/api/portfolio/summary", response_model=PortfolioSummary)
+def get_portfolio_summary():
+    return portfolio_store.summary()
+
+
+@app.get("/api/portfolio/accounts", response_model=list[PortfolioAccountRecord])
+def list_portfolio_accounts():
+    return portfolio_store.list_accounts()
+
+
+@app.post("/api/portfolio/accounts", response_model=PortfolioAccountRecord)
+def create_portfolio_account(data: PortfolioAccountCreate):
+    if not data.name.strip():
+        raise HTTPException(status_code=400, detail="账户名称不能为空")
+    return portfolio_store.create_account(data)
+
+
+@app.patch("/api/portfolio/accounts/{account_id}", response_model=PortfolioAccountRecord)
+def update_portfolio_account(account_id: str, update: PortfolioAccountUpdate):
+    if update.name is not None and not update.name.strip():
+        raise HTTPException(status_code=400, detail="账户名称不能为空")
+    account = portfolio_store.update_account(account_id, update)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Portfolio account not found")
+    return account
+
+
+@app.delete("/api/portfolio/accounts/{account_id}")
+def delete_portfolio_account(account_id: str):
+    return {"ok": portfolio_store.delete_account(account_id)}
+
+
+@app.get("/api/portfolio/positions", response_model=list[PortfolioPositionRecord])
+def list_portfolio_positions(account_id: Optional[str] = None):
+    return portfolio_store.list_positions(account_id=account_id)
+
+
+@app.post("/api/portfolio/positions", response_model=PortfolioPositionRecord)
+def create_portfolio_position(data: PortfolioPositionCreate):
+    try:
+        return portfolio_store.create_position(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/portfolio/positions/{position_id}", response_model=PortfolioPositionRecord)
+def update_portfolio_position(position_id: str, update: PortfolioPositionUpdate):
+    try:
+        position = portfolio_store.update_position(position_id, update)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if position is None:
+        raise HTTPException(status_code=404, detail="Portfolio position not found")
+    return position
+
+
+@app.delete("/api/portfolio/positions/{position_id}")
+def delete_portfolio_position(position_id: str):
+    return {"ok": portfolio_store.delete_position(position_id)}
+
+
+@app.post("/api/portfolio/import-screenshot", response_model=PortfolioScreenshotImportResponse)
+def import_portfolio_screenshot(data: PortfolioScreenshotImportRequest):
+    try:
+        return portfolio_screenshot_importer.import_screenshot(data)
+    except PortfolioScreenshotImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/watchlist")
 def list_watchlist():
     return repository.list_watchlist()
@@ -1155,12 +1257,56 @@ def create_watch_item(data: WatchItemCreate):
     existing = repository.find_watch_item_by_symbol(prepared.symbol or "")
     if existing:
         raise HTTPException(status_code=409, detail=f"{existing.name}（{existing.symbol}）已在候选池中")
-    return repository.create_watch_item(prepared)
+    item = repository.create_watch_item(prepared)
+    watch_rule_store.ensure_default_rule_for_item(item)
+    return item
 
 
 @app.post("/api/watchlist/backfill", response_model=WatchlistBackfillResponse)
 def backfill_watchlist_items():
     return backfill_watchlist(repository)
+
+
+@app.get("/api/monitor/status", response_model=WatchMonitorStatus)
+def get_watch_monitor_status():
+    return watch_monitor_service.get_status()
+
+
+@app.get("/api/monitor/rules", response_model=list[MonitorRuleRecord])
+def get_watch_monitor_rules(item_id: Optional[str] = None):
+    watch_rule_store.ensure_default_rules(repository.list_watchlist())
+    return watch_rule_store.list_rules(item_id=item_id)
+
+
+@app.post("/api/monitor/rules", response_model=MonitorRuleRecord)
+def create_watch_monitor_rule(data: MonitorRuleCreate):
+    try:
+        return watch_rule_store.create_rule(data)
+    except WatchRuleStoreError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/api/monitor/rules/{rule_id}", response_model=MonitorRuleRecord)
+def update_watch_monitor_rule(rule_id: str, update: MonitorRuleUpdate):
+    rule = watch_rule_store.update_rule(rule_id, update)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Monitor rule not found")
+    return rule
+
+
+@app.delete("/api/monitor/rules/{rule_id}")
+def delete_watch_monitor_rule(rule_id: str):
+    return {"ok": watch_rule_store.delete_rule(rule_id)}
+
+
+@app.get("/api/monitor/events", response_model=list[WatchMonitorEvent])
+def get_watch_monitor_events(limit: int = 20):
+    return watch_monitor_service.list_events(limit=limit)
+
+
+@app.post("/api/monitor/scan", response_model=WatchMonitorScanResponse)
+async def trigger_watch_monitor_scan():
+    return await watch_monitor_service.scan_once(manual=True)
 
 
 @app.patch("/api/watchlist/{item_id}")
@@ -1173,9 +1319,13 @@ def update_watch_item(item_id: str, update: WatchItemUpdate):
     item = repository.update_watch_item(item_id, normalized)
     if not item:
         raise HTTPException(status_code=404, detail="Watch item not found")
+    watch_rule_store.sync_item_metadata(item)
     return item
 
 
 @app.delete("/api/watchlist/{item_id}")
 def delete_watch_item(item_id: str):
-    return {"ok": repository.delete_watch_item(item_id)}
+    deleted = repository.delete_watch_item(item_id)
+    if deleted:
+        watch_rule_store.delete_rules_for_item(item_id)
+    return {"ok": deleted}

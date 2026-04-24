@@ -18,9 +18,27 @@ from .common import (
 )
 from .meta import EnvironmentStatus, RuntimeSkillStatus, SkillAssetMetaStatus
 from .profile import UserProfile, UserProfileUpdate
+from .portfolio import (
+    PortfolioAccountCreate,
+    PortfolioAccountRecord,
+    PortfolioMarketSchedule,
+    PortfolioScreenshotImportRequest,
+    PortfolioScreenshotImportResponse,
+    PortfolioScreenshotImportRow,
+    PortfolioAccountUpdate,
+    PortfolioAccountView,
+    PortfolioPositionCreate,
+    PortfolioPositionRecord,
+    PortfolioPositionUpdate,
+    PortfolioPositionView,
+    PortfolioSummary,
+)
 from .session import ChatMessageRecord, SessionDetail, SessionSummary
 from .template import TemplateCreate, TemplateRecord, TemplateUpdate
 from .watchlist import WatchItemCreate, WatchItemRecord, WatchItemUpdate
+from .watchlist import MonitorRuleCondition, MonitorRuleConditionGroup
+from .watchlist import MonitorRuleCreate, MonitorRuleRecord, MonitorRuleUpdate
+from .watchlist import WatchMonitorEvent, WatchMonitorScanResponse, WatchMonitorStatus
 from .watchlist import WatchStockCandidate, WatchStockResolveRequest
 from .watchlist import WatchlistBackfillItemResult, WatchlistBackfillResponse
 
@@ -35,6 +53,19 @@ __all__ = [
     "ChatResponseStatus",
     "EnvironmentStatus",
     "GptReasoningPolicy",
+    "PortfolioAccountCreate",
+    "PortfolioAccountRecord",
+    "PortfolioMarketSchedule",
+    "PortfolioScreenshotImportRequest",
+    "PortfolioScreenshotImportResponse",
+    "PortfolioScreenshotImportRow",
+    "PortfolioAccountUpdate",
+    "PortfolioAccountView",
+    "PortfolioPositionCreate",
+    "PortfolioPositionRecord",
+    "PortfolioPositionUpdate",
+    "PortfolioPositionView",
+    "PortfolioSummary",
     "ResultCard",
     "ResultTable",
     "RuntimeSkillStatus",
@@ -50,6 +81,11 @@ __all__ = [
     "StructuredResult",
     "UserVisibleError",
     "UserVisibleErrorSeverity",
+    "MonitorRuleCondition",
+    "MonitorRuleConditionGroup",
+    "MonitorRuleCreate",
+    "MonitorRuleRecord",
+    "MonitorRuleUpdate",
     "TemplateCreate",
     "TemplateRecord",
     "TemplateUpdate",
@@ -59,6 +95,9 @@ __all__ = [
     "WatchItemCreate",
     "WatchItemRecord",
     "WatchItemUpdate",
+    "WatchMonitorEvent",
+    "WatchMonitorScanResponse",
+    "WatchMonitorStatus",
     "WatchlistBackfillItemResult",
     "WatchlistBackfillResponse",
     "WatchStockCandidate",
