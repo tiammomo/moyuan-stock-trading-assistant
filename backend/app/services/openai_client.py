@@ -183,7 +183,7 @@ class OpenAIAnalysisClient:
         elif not summary.strip():
             summary = None
         else:
-            summary = " ".join(summary.split())[:180]
+            summary = self._normalize_summary_text(summary)[:220]
 
         judgements = self._normalize_string_list(payload.get("judgements"), limit=4)
         follow_ups = self._normalize_string_list(payload.get("follow_ups"), limit=3)
@@ -198,6 +198,14 @@ class OpenAIAnalysisClient:
             follow_ups=follow_ups,
             operation_guidance_content=operation_guidance_content,
         )
+
+    def _normalize_summary_text(self, text: str) -> str:
+        blocks: List[str] = []
+        for raw_block in re.split(r"\n\s*\n", text or ""):
+            block = " ".join(raw_block.split()).strip()
+            if block:
+                blocks.append(block)
+        return "\n\n".join(blocks)
 
     def _card_type_value(self, card: ResultCard) -> str:
         return card.type.value if isinstance(card.type, CardType) else str(card.type)

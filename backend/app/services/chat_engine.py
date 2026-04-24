@@ -202,7 +202,90 @@ SECURITY_SUBJECT_STOPWORDS = {
 
 SECURITY_SUBJECT_PREFIXES = tuple(sorted(SECURITY_SUBJECT_STOPWORDS, key=len, reverse=True))
 
+SECURITY_SUBJECT_GENERIC_SUFFIXES = (
+    "板块",
+    "行业",
+    "概念",
+    "指数",
+    "大盘",
+    "市场",
+    "题材",
+    "方向",
+)
+
+SECURITY_SUBJECT_EXCLUDE_PARTS = (
+    "多少",
+    "什么",
+    "怎么样",
+    "怎么看",
+    "怎么",
+    "如何",
+    "变化",
+    "原因",
+    "公告",
+    "新闻",
+    "研报",
+    "财报",
+    "板块",
+    "行业",
+    "概念",
+    "题材",
+    "市场",
+    "大盘",
+    "指数",
+    "资金",
+    "净流入",
+    "净流出",
+    "涨跌幅",
+    "指标",
+    "数据",
+)
+
+SECURITY_SUBJECT_PROMPT_PREFIXES = (
+    "帮我分析一下",
+    "帮我分析下",
+    "给我分析一下",
+    "给我分析下",
+    "分析一下",
+    "分析下",
+    "帮我看一下",
+    "帮我看",
+    "给我看一下",
+    "给我看",
+    "请帮我看一下",
+    "请帮我分析一下",
+    "看看",
+    "说说",
+    "聊聊",
+)
+
+SECURITY_SUBJECT_SUFFIX_PATTERNS = (
+    r"(?:这只|这支)?(?:股票|个股)(?:现在|目前|今天|今日)?$",
+    r"(?:现在|目前|今天|今日)$",
+)
+
+SECURITY_ANALYSIS_FALLBACK_PATTERNS = (
+    r"(?:给我|帮我|请问|想问|看看|说说|聊聊)?(?:看|分析(?:一下|下)?|诊断)?(?P<subject>[A-Za-z0-9\u4e00-\u9fff]{2,12}?)(?:这只|这支)?(?:股票|个股)(?:(?:，|,).*)?$",
+    r"(?P<subject>[A-Za-z0-9\u4e00-\u9fff]{2,12}?)(?:公告|新闻|研报|财报)(?:有什么变化|怎么样|怎么看|怎么解读|值得看吗|有啥变化)",
+    r"(?:给我|帮我|请问|想问|看看|说说|聊聊)?(?:看|分析(?:一下|下)?|诊断)?(?P<subject>[A-Za-z0-9\u4e00-\u9fff]{2,12}?)(?:现在|目前|今天|今日)?(?:怎么看|怎么操作|如何操作|怎么处理|如何处理|能买吗|值不值得买|建议|诊断|走势|风险|短线|波段|中线|详细数据)",
+)
+
 FOLLOW_UP_COMPARE_KEYWORDS = ("对比", "比较", "打分", "比一下", "比一比")
+
+
+def _explicit_mode_from_message(message: str) -> Optional[ChatMode]:
+    if any(key in message for key in ("中线", "价值", "估值", "财务", "财报", "基本面", "roe", "pe", "pb", "现金流")):
+        return ChatMode.MID_TERM_VALUE
+    if any(key in message for key in ("波段", "趋势", "2周", "4周", "未来", "跟踪", "轮动")):
+        return ChatMode.SWING
+    if any(key in message for key in ("短线", "打板", "连板", "涨停", "盘前", "盘中", "低吸")):
+        return ChatMode.SHORT_TERM
+    if any(key in message for key in ("今天", "明天")) and any(
+        key in message
+        for key in ("方向", "适合做什么", "观察股", "候选", "机会", "题材", "板块", "强势", "买什么")
+    ):
+        return ChatMode.SHORT_TERM
+    return None
 
 
 def detect_mode(
@@ -212,35 +295,40 @@ def detect_mode(
     session_mode: Optional[ChatMode] = None,
 ) -> ModeDetection:
     text = message.lower()
-    if mode_hint:
-        return ModeDetection(mode_hint, 1.0, "mode_hint")
-
     if any(key in message for key in ("刚才", "上面", "这几只", "那几只", "对比", "比较")):
         if any(key in message for key in ("对比", "比较", "排序", "打分")):
             return ModeDetection(ChatMode.COMPARE, 0.95, "rule")
         return ModeDetection(ChatMode.FOLLOW_UP, 0.9, "rule")
 
-    if _extract_security_subject(message):
-        if any(key in message for key in ("中线", "价值", "估值", "财务", "财报", "基本面", "roe", "现金流")):
-            return ModeDetection(ChatMode.MID_TERM_VALUE, 0.84, "single_security_rule")
-        if any(key in message for key in ("波段", "趋势", "2周", "4周", "未来")):
-            return ModeDetection(ChatMode.SWING, 0.84, "single_security_rule")
+    subject = _extract_security_subject(message)
+    explicit_mode = _explicit_mode_from_message(message)
+    preferred_mode_hint = (
+        mode_hint
+        if mode_hint in {ChatMode.SHORT_TERM, ChatMode.SWING, ChatMode.MID_TERM_VALUE}
+        else None
+    )
+
+    if subject:
+        if explicit_mode is not None:
+            return ModeDetection(explicit_mode, 0.9, "single_security_rule")
+        if preferred_mode_hint is not None:
+            return ModeDetection(preferred_mode_hint, 0.82, "mode_hint_single_security")
         return ModeDetection(ChatMode.SHORT_TERM, 0.84, "single_security_rule")
 
-    if any(key in message for key in ("短线", "打板", "连板", "涨停", "明天", "今天", "盘前", "盘中", "低吸")):
-        return ModeDetection(ChatMode.SHORT_TERM, 0.9, "rule")
+    if explicit_mode is not None:
+        return ModeDetection(explicit_mode, 0.88, "rule")
 
-    if any(key in message for key in ("波段", "2周", "4周", "趋势", "轮动", "未来", "跟踪")):
-        return ModeDetection(ChatMode.SWING, 0.86, "rule")
-
-    if any(key in message for key in ("中线", "价值", "估值", "roe", "pe", "pb", "现金流", "分红", "财务质量")):
-        return ModeDetection(ChatMode.MID_TERM_VALUE, 0.88, "rule")
+    if preferred_mode_hint is not None:
+        return ModeDetection(preferred_mode_hint, 0.76, "mode_hint")
 
     if session_mode:
         return ModeDetection(session_mode, 0.65, "session_mode")
 
     if "?" in text or "？" in text or any(key in message for key in ("查询", "多少", "有哪些")):
         return ModeDetection(ChatMode.GENERIC_DATA_QUERY, 0.72, "rule")
+
+    if mode_hint:
+        return ModeDetection(mode_hint, 0.62, "mode_hint")
 
     return ModeDetection(ChatMode.GENERIC_DATA_QUERY, 0.5, "fallback")
 
@@ -278,6 +366,39 @@ def _looks_like_specific_query(message: str) -> bool:
 
 
 def _extract_security_subject(message: str) -> Optional[str]:
+    def normalize_subject(subject: str) -> Optional[str]:
+        cleaned = subject.strip(" ，。！？?？")
+        for prefix in SECURITY_SUBJECT_PREFIXES:
+            cleaned = cleaned.removeprefix(prefix)
+        for prefix in SECURITY_SUBJECT_PROMPT_PREFIXES:
+            cleaned = cleaned.removeprefix(prefix)
+        for pattern in SECURITY_SUBJECT_SUFFIX_PATTERNS:
+            cleaned = re.sub(pattern, "", cleaned)
+        cleaned = re.sub(r"^(?:这个|这只|这支|个股)", "", cleaned)
+        cleaned = cleaned.strip(" ，。！？?？")
+        if not (2 <= len(cleaned) <= 12):
+            return None
+        if cleaned in SECURITY_SUBJECT_STOPWORDS:
+            return None
+        if any(cleaned.endswith(suffix) for suffix in SECURITY_SUBJECT_GENERIC_SUFFIXES):
+            return None
+        if any(part in cleaned for part in SECURITY_SUBJECT_EXCLUDE_PARTS):
+            return None
+        if any(
+            f"{cleaned}{suffix}" in normalized_message
+            for suffix in SECURITY_SUBJECT_GENERIC_SUFFIXES
+        ) and not any(
+            token in normalized_message
+            for token in (
+                f"{cleaned}股票",
+                f"{cleaned}个股",
+                f"{cleaned}这只股票",
+                f"{cleaned}这支股票",
+            )
+        ):
+            return None
+        return cleaned
+
     normalized_message = re.sub(r"\s+", "", message)
     code_match = re.search(r"([0368]\d{5}(?:\.(?:SH|SZ|BJ))?)", normalized_message, re.IGNORECASE)
     if code_match:
@@ -287,13 +408,24 @@ def _extract_security_subject(message: str) -> Optional[str]:
         match = re.search(pattern, normalized_message)
         if not match:
             continue
-        subject = match.group("subject").strip(" ，。！？?？")
-        for stopword in SECURITY_SUBJECT_PREFIXES:
-            subject = subject.removeprefix(stopword)
-        subject = re.sub(r"(今天|今日)$", "", subject)
-        subject = subject.strip()
-        if 2 <= len(subject) <= 12 and subject not in SECURITY_SUBJECT_STOPWORDS:
+        subject = normalize_subject(match.group("subject"))
+        if subject:
             return subject
+
+    for pattern in SECURITY_ANALYSIS_FALLBACK_PATTERNS:
+        match = re.search(pattern, normalized_message)
+        if not match:
+            continue
+        subject = normalize_subject(match.group("subject"))
+        if subject:
+            return subject
+
+    candidate = normalized_message
+    for prefix in SECURITY_SUBJECT_PROMPT_PREFIXES:
+        candidate = candidate.removeprefix(prefix)
+    candidate = normalize_subject(candidate)
+    if candidate and re.fullmatch(r"[A-Za-z0-9\u4e00-\u9fff]{2,8}", candidate):
+        return candidate
     return None
 
 
@@ -433,6 +565,71 @@ def _single_security_route(
     )
 
 
+def _generic_query_route(
+    message: str,
+    *,
+    subject: Optional[str],
+    entry_price_focus: bool,
+    holding_context_focus: bool,
+) -> RoutePlan:
+    if subject:
+        inferred_mode = _explicit_mode_from_message(message) or ChatMode.SHORT_TERM
+        return _single_security_route(
+            subject,
+            inferred_mode,
+            entry_price_focus=entry_price_focus,
+            holding_context_focus=holding_context_focus,
+        )
+
+    if any(keyword in message for keyword in ("公告", "公告解读", "公告摘要")):
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[_skill_plan(SKILL_SEARCH_ANNOUNCEMENT, message, "按原始问句查询公告动态")],
+        )
+
+    if any(keyword in message for keyword in ("研报", "研究报告", "机构观点")):
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[_skill_plan(SKILL_SEARCH_REPORT, message, "按原始问句查询研报观点")],
+        )
+
+    if any(keyword in message for keyword in ("新闻", "资讯", "消息", "催化")):
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[_skill_plan(SKILL_SEARCH_NEWS, message, "按原始问句查询新闻动态")],
+        )
+
+    if any(keyword in message for keyword in ("股东", "股本", "筹码", "户数", "前十大股东")):
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[_skill_plan(SKILL_WENCAI_SHAREHOLDER_QUERY, message, "按原始问句查询股东和筹码信息")],
+        )
+
+    if any(keyword in message for keyword in ("财报", "财务", "估值", "roe", "ROE", "pe", "PE", "pb", "PB", "营收", "净利润", "现金流", "毛利率", "负债率")):
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[_skill_plan(SKILL_WENCAI_FINANCIAL_QUERY, message, "按原始问句查询财务和估值信息")],
+        )
+
+    if any(keyword in message for keyword in ("行业", "板块", "概念", "题材")):
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[_skill_plan(SKILL_WENCAI_INDUSTRY_QUERY, message, "按原始问句查询行业和板块信息")],
+        )
+
+    return RoutePlan(
+        mode=ChatMode.GENERIC_DATA_QUERY,
+        strategy=SkillStrategy.SINGLE_SOURCE,
+        skills=[_skill_plan(SKILL_WENCAI_MARKET_QUERY, message, "按原始问句查询行情与市场数据")],
+    )
+
+
 def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan:
     limit = profile.default_result_size or 5
     subject = _extract_security_subject(message)
@@ -485,10 +682,11 @@ def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan
     if mode == ChatMode.COMPARE:
         return RoutePlan(mode, SkillStrategy.COMPARE_EXISTING, [])
 
-    return RoutePlan(
-        mode=mode,
-        strategy=SkillStrategy.SINGLE_SOURCE,
-        skills=[_skill_plan(SKILL_WENCAI_STOCK_SCREEN, message, "按原始问句查询问财数据")],
+    return _generic_query_route(
+        message,
+        subject=subject,
+        entry_price_focus=entry_price_focus,
+        holding_context_focus=holding_context_focus,
     )
 
 
@@ -615,6 +813,40 @@ def _skill_failed(name: str, reason: str) -> SkillUsage:
     return SkillUsage(name=name, status=SkillRunStatus.FAILED, latency_ms=None, reason=reason)
 
 
+def _wencai_status_code(reason: str) -> Optional[int]:
+    matched = re.search(r"status_code=([-\d]+)", reason)
+    if not matched:
+        return None
+    try:
+        return int(matched.group(1))
+    except ValueError:
+        return None
+
+
+def _friendly_wencai_failure_message(
+    reason: str,
+    *,
+    single_security: bool = False,
+) -> str:
+    status_code = _wencai_status_code(reason)
+
+    if status_code == -2322 or "chunks_info=" in reason:
+        if single_security:
+            return "问财这次没理解你的问法。建议直接写股票名和要看的指标，例如“浙江新能 最新价、近20日趋势、公告”。"
+        return "问财这次没理解你的问法。建议把问题改得更短、更明确，并补充股票名、时间范围或指标。"
+
+    if "API_KEY 未配置" in reason or "HTTP 401" in reason or "HTTP 403" in reason:
+        return "问财鉴权失败，请检查后端 IWENCAI_API_KEY 后重试。"
+
+    if "网络错误" in reason:
+        return "问财接口网络异常，请稍后重试。"
+
+    if status_code is not None and status_code < 0:
+        return "问财接口暂时没返回可用结果。建议换更明确的问法，或稍后再试。"
+
+    return "问财接口暂时不可用，请稍后重试。"
+
+
 def _execution_user_visible_error(failure_reasons: List[str]) -> UserVisibleError:
     first_reason = next((reason for reason in failure_reasons if reason), "")
     if not first_reason:
@@ -644,11 +876,20 @@ def _execution_user_visible_error(failure_reasons: List[str]) -> UserVisibleErro
             retryable=True,
         )
 
+    if _wencai_status_code(first_reason) == -2322 or "chunks_info=" in first_reason:
+        return UserVisibleError(
+            code="iwencai_query_not_understood",
+            severity=UserVisibleErrorSeverity.WARNING,
+            title="问财暂时没理解问题",
+            message=_friendly_wencai_failure_message(first_reason),
+            retryable=True,
+        )
+
     return UserVisibleError(
         code="iwencai_upstream_error",
         severity=UserVisibleErrorSeverity.WARNING,
         title="问财接口调用失败",
-        message=first_reason[:120],
+        message=_friendly_wencai_failure_message(first_reason),
         retryable=True,
     )
 
@@ -1112,8 +1353,17 @@ def _dedupe_string_list(
     return deduped
 
 
+def _normalize_summary_text(text: str) -> str:
+    blocks: List[str] = []
+    for raw_block in re.split(r"\n\s*\n", str(text or "")):
+        block = " ".join(raw_block.split()).strip()
+        if block:
+            blocks.append(block)
+    return "\n\n".join(blocks)
+
+
 def _normalize_structured_result_output(result: StructuredResult) -> StructuredResult:
-    summary = " ".join(result.summary.split()).strip()
+    summary = _normalize_summary_text(result.summary)
     facts = _dedupe_string_list(result.facts)
     judgements = _dedupe_string_list(result.judgements, against=[summary], limit=5)
     follow_ups = _dedupe_string_list(result.follow_ups, limit=3)
@@ -1701,6 +1951,94 @@ def _single_security_verdict(mode: ChatMode, change: Optional[float], money_flow
     return "结论偏中性，建议先补财务和行业验证"
 
 
+def _extract_prefixed_line(content: str, prefix: str) -> Optional[str]:
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if line.startswith(prefix):
+            text = line[len(prefix) :].strip()
+            return text or None
+    return None
+
+
+def _strip_orderbook_clause(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    cleaned = re.sub(r"\s*盘口上.*$", "", text).strip()
+    return cleaned or None
+
+
+def _build_single_security_main_summary(
+    *,
+    name: str,
+    latest: Any,
+    change_text: str,
+    short_horizon_line: str,
+    mid_horizon_line: str,
+    long_horizon_line: str,
+    action_card: ResultCard,
+    row_risk: Optional[str],
+    money_flow_text: Optional[str],
+    catalyst_hint: Optional[str],
+    orderbook_bias: Optional[str],
+    fundamental_judgement: Optional[str],
+    has_holding_position: bool,
+) -> str:
+    short_parts = [
+        f"现价 {latest}" if latest not in (None, "", "-") else None,
+        f"今日 {change_text}" if change_text and change_text != "-" else None,
+        short_horizon_line or None,
+    ]
+    short_text = "；".join(part for part in short_parts if part) or "先看短线量价和承接。"
+
+    swing_text = mid_horizon_line or "先看趋势修复是否成立。"
+
+    invalidation_line = _extract_prefixed_line(action_card.content, "失效条件：")
+    stop_watch_line = _extract_prefixed_line(action_card.content, "止损/观察位：")
+    can_chase_line = _strip_orderbook_clause(
+        _extract_prefixed_line(action_card.content, "现在能不能追：")
+    )
+    better_buy_line = _extract_prefixed_line(action_card.content, "更好的买点：")
+
+    risk_parts = _dedupe_string_list(
+        [
+            f"资金侧 {money_flow_text}。" if money_flow_text else "",
+            f"当前核心风险是：{row_risk}。" if row_risk and row_risk != "-" else "",
+            f"失效条件上，{invalidation_line}" if invalidation_line else "",
+            f"盘口上{orderbook_bias}。" if orderbook_bias else "",
+            f"催化/风险点先盯「{catalyst_hint}」。" if catalyst_hint else "",
+            fundamental_judgement or "",
+        ],
+        limit=4,
+    )
+    risk_text = " ".join(risk_parts) or "先看资金、量价和关键观察位是否被破坏。"
+
+    holding_prefix = (
+        "你当前已有仓位，先按持仓节奏处理，不要把持仓问题做成追涨问题。"
+        if has_holding_position
+        else None
+    )
+
+    action_parts = _dedupe_string_list(
+        [
+            holding_prefix or "",
+            can_chase_line or "",
+            better_buy_line or "",
+            stop_watch_line or "",
+        ],
+        limit=4,
+    )
+    action_text = " ".join(action_parts) or "先等更清晰的量价和资金信号，再决定是否介入。"
+
+    return "\n\n".join(
+        [
+            f"短线：{short_text}",
+            f"波段：{swing_text}",
+            f"风险：{risk_text}",
+            f"操作建议：{action_text}",
+        ]
+    )
+
+
 def _single_security_summary(
     route: RoutePlan,
     row: Dict[str, Any],
@@ -1737,7 +2075,6 @@ def _single_security_summary(
     twenty_day_change = snapshot.twenty_day_change
     news_titles = _extract_card_titles(cards, "新闻搜索补充")
     announcement_titles = _extract_card_titles(cards, "公告搜索补充")
-    verdict = _single_security_verdict(route.mode, change, money_flow)
     holding_position = holding_context.matched_position if holding_context else None
     action_card = _single_security_action_card(
         route,
@@ -1749,21 +2086,12 @@ def _single_security_summary(
     observe_low = action_card.metadata.get("observe_low")
     observe_high = action_card.metadata.get("observe_high")
     stop_price = action_card.metadata.get("stop_price")
-    price_zone_text = _format_price_zone(observe_low, observe_high) or "更低的承接区间"
     catalyst_hint = news_titles[0] if news_titles else announcement_titles[0] if announcement_titles else None
     orderbook_bias = _local_orderbook_bias(local_market)
     short_horizon_line = _build_short_horizon_line(snapshot, observe_low=observe_low, observe_high=observe_high)
     mid_horizon_line = _build_mid_horizon_line(snapshot)
     long_horizon_line = _build_long_horizon_line(snapshot, industry=industry, concept=concept)
-    fundamental_brief = _build_fundamental_brief(snapshot, report_period=report_period)
     fundamental_judgement = _build_fundamental_judgement(snapshot)
-    listing_brief = _join_parts(
-        [
-            f"上市板块 {listing_board}" if listing_board else None,
-            f"上市地点 {listing_place}" if listing_place else None,
-            f"所属行业 {industry}" if industry else None,
-        ]
-    )
     horizon_card = _multi_horizon_analysis_card(
         route,
         row,
@@ -1772,99 +2100,23 @@ def _single_security_summary(
         observe_high=observe_high if isinstance(observe_high, (int, float)) else None,
     )
     finance_card = _fundamental_card(route.subject or name, raw)
+    row_risk = str(row.get("风险点") or "").strip() or None
 
-    if route.holding_context_focus and holding_position:
-        cost_text = _format_price(holding_position.cost_price)
-        pnl_text = _format_signed_money(holding_position.float_profit)
-        pnl_pct_text = _format_signed_pct(holding_position.profit_rate_pct)
-        holding_bits = [f"你模拟账户里当前持有{name} {_format_share_count(holding_position.quantity)}"]
-        if holding_position.cost_price is not None:
-            holding_bits.append(f"成本 {cost_text} 元")
-        if pnl_text:
-            pnl_part = f"浮盈亏 {pnl_text}"
-            if pnl_pct_text:
-                pnl_part += f"（{pnl_pct_text}）"
-            holding_bits.append(pnl_part)
-        market_bits = [f"现价 {latest}", f"今日 {change_text}"]
-        if money_flow_text:
-            market_bits.append(f"主力资金 {money_flow_text}")
-        summary = "，".join(holding_bits) + "；" + "，".join(market_bits[:3]) + "。"
-        if change is not None and change < 0:
-            summary += f" 今天更偏向持仓观察，不建议逆势加仓，先看 {price_zone_text} 承接。"
-        else:
-            summary += f" 先看 {price_zone_text} 一带能否稳住，再决定继续拿还是做加减仓。"
-        ma20_hint = _price_vs_anchor(snapshot.close, snapshot.ma20, "MA20")
-        ma60_hint = _price_vs_anchor(snapshot.close, snapshot.ma60, "MA60")
-        if ma20_hint or ma60_hint:
-            summary += f" 中线看 {ma20_hint or '趋势修复'}，长线看 {ma60_hint or '基本面验证'}。"
-        if listing_brief:
-            summary += f" 归属上看，{listing_brief}。"
-        if fundamental_brief:
-            summary += f" 财报上看，{fundamental_brief}。"
-        if catalyst_hint:
-            summary += f" 催化上先盯「{catalyst_hint}」。"
-    elif route.holding_context_focus:
-        if holding_context is None:
-            summary = f"这轮没成功读到你的模拟持仓，只能先按个股快照给出处理建议。"
-        elif holding_context.total_positions == 0:
-            if holding_context.opened_now:
-                summary = f"已自动创建模拟账户，当前还没持有{name}，这轮先按未持仓视角判断。"
-            else:
-                summary = f"模拟账户当前空仓，未持有{name}，这轮先按未持仓视角判断。"
-        else:
-            count_text = holding_context.total_positions if holding_context else 0
-            summary = f"模拟账户当前未持有{name}"
-            if count_text:
-                summary += f"，但账户里还有 {count_text} 只其他股票"
-            summary += "；这轮先按未持仓视角处理。"
-        summary += f" 现价 {latest}、今日涨跌幅 {change_text}。"
-        if money_flow_text:
-            summary += f" 眼下主力资金 {money_flow_text}。"
-        if observe_low and observe_high:
-            summary += f" 更适合等 {price_zone_text} 一带承接确认后再看。"
-        summary += f" 短线看 {short_horizon_line} 中线看 {mid_horizon_line}"
-        if listing_brief:
-            summary += f" 归属上看，{listing_brief}。"
-        if fundamental_brief:
-            summary += f" 财报上看，{fundamental_brief}。"
-        if catalyst_hint:
-            summary += f" 催化上先盯「{catalyst_hint}」。"
-    elif route.entry_price_focus and observe_low and observe_high and stop_price:
-        if route.mode == ChatMode.SHORT_TERM:
-            summary = (
-                f"{name} 短线不建议在 {latest} 直接追，优先等 {observe_low:.2f}-{observe_high:.2f} 元区间承接稳定再看。"
-                f"跌破 {stop_price:.2f} 元，这个买点就先失效。"
-            )
-        elif route.mode == ChatMode.SWING:
-            summary = (
-                f"{name} 更适合等 {observe_low:.2f}-{observe_high:.2f} 元区间的回踩确认，"
-                f"不建议在 {latest} 附近直接追。失效位参考 {stop_price:.2f} 元。"
-            )
-        else:
-            summary = (
-                f"{name} 中线更适合分批看 {observe_low:.2f}-{observe_high:.2f} 元区间，"
-                f"不建议单笔追高到 {latest}。失效位参考 {stop_price:.2f} 元。"
-            )
-        summary += f" 从技术面看，{short_horizon_line} 中线看 {mid_horizon_line} 长线看 {long_horizon_line}"
-        if money_flow_text:
-            summary += f" 眼下资金侧还是 {money_flow_text}。"
-        if listing_brief:
-            summary += f" 归属上看，{listing_brief}。"
-        if fundamental_brief:
-            summary += f" 财报上看，{fundamental_brief}。"
-    else:
-        summary = (
-            f"{name} 当前更偏向“{verdict}”，现价 {latest}、今日涨跌幅 {change_text}。"
-            f" 短线看 {short_horizon_line} 中线看 {mid_horizon_line} 长线看 {long_horizon_line}"
-        )
-        if listing_brief:
-            summary += f" 归属上看，{listing_brief}。"
-        if fundamental_brief:
-            summary += f" 财报上看，{fundamental_brief}。"
-        if catalyst_hint:
-            summary += f" 催化上先盯「{catalyst_hint}」是不是实质利好。"
-    if orderbook_bias:
-        summary += f" 盘口上{orderbook_bias}。"
+    summary = _build_single_security_main_summary(
+        name=name,
+        latest=latest,
+        change_text=change_text,
+        short_horizon_line=short_horizon_line,
+        mid_horizon_line=mid_horizon_line,
+        long_horizon_line=long_horizon_line,
+        action_card=action_card,
+        row_risk=row_risk,
+        money_flow_text=money_flow_text,
+        catalyst_hint=catalyst_hint,
+        orderbook_bias=orderbook_bias,
+        fundamental_judgement=fundamental_judgement,
+        has_holding_position=bool(route.holding_context_focus and holding_position),
+    )
 
     facts = [f"{name} 当前价格 {latest}，今日涨跌幅 {change_text}。"]
     if route.holding_context_focus and holding_context:
@@ -2229,7 +2481,7 @@ def _apply_gpt_enhancement(
         cards.append(card)
 
     return _normalize_structured_result_output(StructuredResult(
-        summary=enhancement.summary or result.summary,
+        summary=result.summary if route.single_security else (enhancement.summary or result.summary),
         table=result.table,
         cards=cards,
         facts=result.facts,
@@ -2511,7 +2763,10 @@ def _execute_plan_core(
             elif "网络错误" in first_reason:
                 fallback_suggestion = "问财接口网络异常，请稍后重试。"
             elif first_reason:
-                fallback_suggestion = first_reason[:120]
+                fallback_suggestion = _friendly_wencai_failure_message(
+                    first_reason,
+                    single_security=route.single_security,
+                )
             else:
                 fallback_suggestion = "请稍后重试。"
             fallback_summary = "这次没有成功拿到问财结果。"

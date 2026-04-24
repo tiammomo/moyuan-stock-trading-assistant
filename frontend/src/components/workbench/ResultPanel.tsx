@@ -9,7 +9,6 @@ import { buildAutoWatchNote, buildAutoWatchTags } from "@/lib/watchlistAutoFill"
 import { ResultTable } from "@/components/results/ResultTable";
 import { ResultCards } from "@/components/results/ResultCards";
 import { ResultSummary } from "@/components/results/ResultSummary";
-import { UserVisibleErrorNotice } from "@/components/ui/UserVisibleErrorNotice";
 import { SkillTracePanel } from "./SkillTracePanel";
 import { FollowUpSuggestions } from "./FollowUpSuggestions";
 import { Button } from "@/components/ui/Button";
@@ -33,7 +32,7 @@ export function ResultPanel() {
   const { watchlist, createItemAsync, resolveStockAsync } = useWatchlist();
 
   const latestAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
-  const latestUserVisibleError = latestAssistantMessage?.user_visible_error ?? null;
+  const suppressOverviewForFailure = latestAssistantMessage?.status === "failed";
   const skills = latestAssistantMessage?.skills_used || [];
   const followUps = currentResult?.follow_ups || [];
   const favoriteSymbols = new Set(watchlist.map((item) => normalizeStockSymbol(item.symbol)));
@@ -56,9 +55,8 @@ export function ResultPanel() {
     ) || [];
   const hasTable = Boolean(currentResult?.table);
   const hasSecondaryCards = secondaryCards.length > 0;
-  const hasOverviewContent = Boolean(
-    latestUserVisibleError ||
-      currentResult?.judgements?.length ||
+  const hasOverviewContent = !suppressOverviewForFailure && Boolean(
+    currentResult?.judgements?.length ||
       actionCards.length > 0 ||
       hasSecondaryCards ||
       hasTable
@@ -211,14 +209,13 @@ export function ResultPanel() {
             {hasOverviewContent ? (
               showStructuredCardsFirst ? (
                 <>
-                  {latestUserVisibleError && <UserVisibleErrorNotice error={latestUserVisibleError} />}
                   {actionCards.length > 0 && <ResultCards cards={actionCards} />}
                   {hasSecondaryCards && <ResultCards cards={secondaryCards} />}
-                  <ResultSummary result={currentResult} userVisibleError={null} />
+                  <ResultSummary result={currentResult} />
                 </>
               ) : (
                 <>
-                  <ResultSummary result={currentResult} userVisibleError={latestUserVisibleError} />
+                  <ResultSummary result={currentResult} />
                   {actionCards.length > 0 && <ResultCards cards={actionCards} />}
                 {resultViewMode === "table" && hasTable && (
                   <ResultTable
@@ -230,7 +227,9 @@ export function ResultPanel() {
               </>
             )
           ) : (
-              <div className="py-8 text-center text-sm text-muted-foreground">暂无分析结果</div>
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                {suppressOverviewForFailure ? "本次请求失败，原因已在左侧对话中展示。" : "暂无分析结果"}
+              </div>
             )}
           </>
         )}

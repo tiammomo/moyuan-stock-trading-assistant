@@ -32,6 +32,7 @@ interface ChatState {
   setPartialSummary: (summary: string) => void;
   setMessages: (messages: ChatMessageRecord[]) => void;
   addMessage: (message: ChatMessageRecord) => void;
+  prepareRetryAttempt: (messageContent: string) => void;
   patchLatestAssistantMessage: (patch: LatestAssistantMessagePatch) => void;
   updateLatestAssistantMessage: (result: ChatResponse) => void;
   clearMessages: () => void;
@@ -65,6 +66,81 @@ function mergeStructuredResult(
   };
 }
 
+function normalizeRetryMessageContent(value: string): string {
+  return String(value || "").split(/\s+/).filter(Boolean).join(" ").trim();
+}
+
+function collapseRetryExchanges(messages: ChatMessageRecord[]): ChatMessageRecord[] {
+  const collapsed: ChatMessageRecord[] = [];
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const current = messages[index];
+    const next = messages[index + 1];
+
+    if (current.role === "user" && next?.role === "assistant") {
+      const prevUser = collapsed.at(-2);
+      const prevAssistant = collapsed.at(-1);
+      const sameContent =
+        prevUser?.role === "user" &&
+        normalizeRetryMessageContent(prevUser.content) === normalizeRetryMessageContent(current.content);
+      const previousFailed = prevAssistant?.role === "assistant" && prevAssistant.status === "failed";
+
+      if (sameContent && previousFailed) {
+        collapsed.splice(-2, 2, current, next);
+      } else {
+        collapsed.push(current, next);
+      }
+      index += 1;
+      continue;
+    }
+
+    collapsed.push(current);
+  }
+
+  return collapsed;
+}
+
+function mergeMessageRecords(
+  current: ChatMessageRecord,
+  incoming: ChatMessageRecord
+): ChatMessageRecord {
+  return {
+    ...current,
+    ...incoming,
+    parent_message_id: incoming.parent_message_id ?? current.parent_message_id,
+    skills_used: incoming.skills_used.length > 0 ? incoming.skills_used : current.skills_used,
+    result_snapshot:
+      incoming.result_snapshot !== undefined
+        ? mergeStructuredResult(current.result_snapshot, incoming.result_snapshot) ?? null
+        : current.result_snapshot,
+    user_visible_error:
+      incoming.user_visible_error !== undefined ? incoming.user_visible_error : current.user_visible_error,
+  };
+}
+
+function dedupeMessages(messages: ChatMessageRecord[]): ChatMessageRecord[] {
+  const deduped: ChatMessageRecord[] = [];
+  const indexById = new Map<string, number>();
+
+  for (const message of messages) {
+    const existingIndex = indexById.get(message.id);
+    if (existingIndex === undefined) {
+      indexById.set(message.id, deduped.length);
+      deduped.push(message);
+      continue;
+    }
+
+    deduped[existingIndex] = mergeMessageRecords(deduped[existingIndex], message);
+  }
+
+  return collapseRetryExchanges(deduped);
+}
+
+function upsertMessage(messages: ChatMessageRecord[], message: ChatMessageRecord): ChatMessageRecord[] {
+  const nextMessages = [...messages, message];
+  return dedupeMessages(nextMessages);
+}
+
 const initialState = {
   currentSessionId: null,
   messages: [],
@@ -87,11 +163,12 @@ export const useChatStore = create<ChatState>((set) => ({
   setCurrentResult: (result) => set({ currentResult: result }),
   setPartialSummary: (summary) => set({ partialSummary: summary }),
   setMessages: (messages) => {
-    const latestAssistant = [...messages]
+    const dedupedMessages = dedupeMessages(messages);
+    const latestAssistant = [...dedupedMessages]
       .reverse()
       .find((message) => message.role === "assistant");
     set({
-      messages,
+      messages: dedupedMessages,
       currentResult: latestAssistant?.result_snapshot ?? null,
       partialSummary: "",
       streamingStatus: "idle",
@@ -99,7 +176,33 @@ export const useChatStore = create<ChatState>((set) => ({
   },
 
   addMessage: (message) =>
-    set((state) => ({ messages: [...state.messages, message] })),
+    set((state) => ({ messages: upsertMessage(state.messages, message) })),
+
+  prepareRetryAttempt: (messageContent) =>
+    set((state) => {
+      const normalizedIncoming = normalizeRetryMessageContent(messageContent);
+      if (!normalizedIncoming) return state;
+
+      const messages = [...state.messages];
+      const lastAssistant = messages.at(-1);
+      const lastUser = messages.at(-2);
+      const canReplace =
+        lastAssistant?.role === "assistant" &&
+        lastAssistant.status === "failed" &&
+        lastUser?.role === "user" &&
+        normalizeRetryMessageContent(lastUser.content) === normalizedIncoming;
+
+      if (!canReplace) return state;
+
+      messages.splice(-2, 2);
+      const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+
+      return {
+        messages,
+        currentResult: latestAssistant?.result_snapshot ?? null,
+        partialSummary: "",
+      };
+    }),
 
   patchLatestAssistantMessage: (patch) =>
     set((state) => {
@@ -116,9 +219,10 @@ export const useChatStore = create<ChatState>((set) => ({
         ...messagePatch,
         result_snapshot: nextResultSnapshot,
       };
+      const dedupedMessages = dedupeMessages(messages);
 
       return {
-        messages,
+        messages: dedupedMessages,
         currentResult: resultSnapshotPatch !== undefined ? nextResultSnapshot ?? null : state.currentResult,
       };
     }),
@@ -156,8 +260,9 @@ export const useChatStore = create<ChatState>((set) => ({
           }
         }
       }
+      const dedupedMessages = dedupeMessages(messages);
       return {
-        messages,
+        messages: dedupedMessages,
         currentResult: {
           summary: result.summary,
           table: result.table,

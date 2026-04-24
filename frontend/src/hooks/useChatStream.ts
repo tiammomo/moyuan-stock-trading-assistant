@@ -294,8 +294,10 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
   const {
     setStreamingStatus,
     setAutoDetectedMode,
+    setModeHint,
     setPartialSummary,
     addMessage,
+    prepareRetryAttempt,
     setCurrentResult,
     setCurrentSession,
     patchLatestAssistantMessage,
@@ -313,6 +315,7 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
       setStreamingState("connecting");
       setStreamingStatus("analyzing");
       setPartialSummary("");
+      prepareRetryAttempt(userMessage.content);
 
       addMessage({
         id: userMessageId,
@@ -383,6 +386,13 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
               switch (event.event) {
                 case "mode_detected":
                   setAutoDetectedMode(asChatMode(data.mode));
+                  if (
+                    useChatStore.getState().modeHint === "generic_data_query" &&
+                    asChatMode(data.mode) &&
+                    asChatMode(data.mode) !== "generic_data_query"
+                  ) {
+                    setModeHint(null);
+                  }
                   patchLatestAssistantMessage({
                     mode: asChatMode(data.mode),
                     status: "analyzing",
@@ -555,7 +565,9 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
       addMessage,
       options,
       patchLatestAssistantMessage,
+      prepareRetryAttempt,
       setAutoDetectedMode,
+      setModeHint,
       setCurrentResult,
       setCurrentSession,
       setPartialSummary,
