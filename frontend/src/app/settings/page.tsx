@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { MonitorNotificationSettings } from "@/components/monitor/MonitorNotificationSettings";
 import { useMetaStatus } from "@/hooks/useMetaStatus";
 import { useProfile } from "@/hooks/useProfile";
 import type { UserProfileUpdate } from "@/types/profile";
@@ -257,6 +258,10 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+      </section>
+
+      <section className="mb-8">
+        <MonitorNotificationSettings />
       </section>
 
       <section className="mb-8">

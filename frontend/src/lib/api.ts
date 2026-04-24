@@ -174,6 +174,76 @@ export async function triggerWatchMonitorScan() {
   });
 }
 
+export async function getMonitorNotificationChannels() {
+  return fetchApi<import("@/types/notification").MonitorNotificationChannelRecord[]>(
+    "/api/monitor/notifications/channels"
+  );
+}
+
+export async function createMonitorNotificationChannel(
+  data: import("@/types/notification").MonitorNotificationChannelCreate
+) {
+  return fetchApi<import("@/types/notification").MonitorNotificationChannelRecord>(
+    "/api/monitor/notifications/channels",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function updateMonitorNotificationChannel(
+  id: string,
+  data: import("@/types/notification").MonitorNotificationChannelUpdate
+) {
+  return fetchApi<import("@/types/notification").MonitorNotificationChannelRecord>(
+    `/api/monitor/notifications/channels/${id}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function deleteMonitorNotificationChannel(id: string) {
+  return fetchApi<{ ok: boolean }>(`/api/monitor/notifications/channels/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function testMonitorNotificationChannel(id: string) {
+  return fetchApi<import("@/types/notification").MonitorNotificationDeliveryRecord>(
+    `/api/monitor/notifications/channels/${id}/test`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function getMonitorNotificationSettings() {
+  return fetchApi<import("@/types/notification").MonitorNotificationSettings>(
+    "/api/monitor/notifications/settings"
+  );
+}
+
+export async function updateMonitorNotificationSettings(
+  data: import("@/types/notification").MonitorNotificationSettingsUpdate
+) {
+  return fetchApi<import("@/types/notification").MonitorNotificationSettings>(
+    "/api/monitor/notifications/settings",
+    {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function getMonitorNotificationDeliveries(limit = 20) {
+  return fetchApi<import("@/types/notification").MonitorNotificationDeliveryRecord[]>(
+    `/api/monitor/notifications/deliveries?limit=${limit}`
+  );
+}
+
 // Templates
 export async function getTemplates() {
   return fetchApi<import("@/types/template").TemplateRecord[]>("/api/templates");

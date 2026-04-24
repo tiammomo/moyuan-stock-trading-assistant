@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { Badge } from "@/components/ui/Badge";
+import type { MonitorNotificationChannelRecord } from "@/types/notification";
 import type {
   MonitorRuleCondition,
   MonitorRuleConditionOperator,
@@ -34,6 +36,7 @@ interface MonitorRuleFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   watchlist: WatchItemRecord[];
+  notificationChannels: MonitorNotificationChannelRecord[];
   initialRule?: MonitorRuleRecord | null;
   onCreate: (payload: MonitorRuleCreate) => Promise<void>;
   onUpdate: (ruleId: string, payload: MonitorRuleUpdate) => Promise<void>;
@@ -135,6 +138,7 @@ export function MonitorRuleForm({
   open,
   onOpenChange,
   watchlist,
+  notificationChannels,
   initialRule,
   onCreate,
   onUpdate,
@@ -148,6 +152,7 @@ export function MonitorRuleForm({
   const [enabled, setEnabled] = useState(true);
   const [severity, setSeverity] = useState<"info" | "warning">("info");
   const [groupOp, setGroupOp] = useState<"and" | "or">("or");
+  const [notifyChannelIds, setNotifyChannelIds] = useState<string[]>([]);
   const [marketHoursMode, setMarketHoursMode] = useState<"trading_only" | "always">("trading_only");
   const [repeatMode, setRepeatMode] = useState<"repeat" | "once">("repeat");
   const [expireAt, setExpireAt] = useState("");
@@ -166,6 +171,7 @@ export function MonitorRuleForm({
       setEnabled(initialRule.enabled);
       setSeverity(initialRule.severity);
       setGroupOp(initialRule.condition_group.op);
+      setNotifyChannelIds(initialRule.notify_channel_ids ?? []);
       setMarketHoursMode(initialRule.market_hours_mode ?? "trading_only");
       setRepeatMode(initialRule.repeat_mode ?? "repeat");
       setExpireAt(toDatetimeLocalValue(initialRule.expire_at));
@@ -180,6 +186,7 @@ export function MonitorRuleForm({
     setEnabled(true);
     setSeverity("info");
     setGroupOp("or");
+    setNotifyChannelIds([]);
     setMarketHoursMode("trading_only");
     setRepeatMode("repeat");
     setExpireAt("");
@@ -273,6 +280,7 @@ export function MonitorRuleForm({
           rule_name: normalizedName,
           enabled,
           severity,
+          notify_channel_ids: notifyChannelIds,
           market_hours_mode: marketHoursMode,
           repeat_mode: repeatMode,
           expire_at: normalizedExpireAt,
@@ -289,6 +297,7 @@ export function MonitorRuleForm({
           rule_name: normalizedName,
           enabled,
           severity,
+          notify_channel_ids: notifyChannelIds,
           market_hours_mode: marketHoursMode,
           repeat_mode: repeatMode,
           expire_at: normalizedExpireAt,
@@ -304,6 +313,14 @@ export function MonitorRuleForm({
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "保存规则失败");
     }
+  };
+
+  const toggleNotifyChannel = (channelId: string) => {
+    setNotifyChannelIds((current) =>
+      current.includes(channelId)
+        ? current.filter((item) => item !== channelId)
+        : [...current, channelId]
+    );
   };
 
   return (
@@ -347,6 +364,39 @@ export function MonitorRuleForm({
                 options={GROUP_OPTIONS}
               />
             </label>
+            <div className="space-y-1 text-sm md:col-span-2">
+              <span className="text-muted-foreground">通知渠道覆盖</span>
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+                {notificationChannels.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    还没有可用通知渠道。留空时会继续只在本地事件流里展示。
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {notificationChannels.map((channel) => (
+                        <Button
+                          key={channel.id}
+                          type="button"
+                          variant={notifyChannelIds.includes(channel.id) ? "secondary" : "outline"}
+                          size="sm"
+                          onClick={() => toggleNotifyChannel(channel.id)}
+                        >
+                          {channel.name}
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      {notifyChannelIds.length === 0 ? (
+                        <Badge variant="secondary">未覆盖，使用默认渠道</Badge>
+                      ) : (
+                        <Badge variant="outline">已覆盖 {notifyChannelIds.length} 个渠道</Badge>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">状态</span>
               <Select

@@ -20,6 +20,9 @@ from .repository import repository
 
 
 DEFAULT_RULE_NAME = "默认异动提醒"
+DEFAULT_MAX_TRIGGERS_PER_DAY = 5
+DEFAULT_MARKET_HOURS_MODE = "trading_only"
+DEFAULT_REPEAT_MODE = "repeat"
 
 
 class WatchRuleStoreError(RuntimeError):
@@ -55,6 +58,21 @@ class WatchRuleStore:
             ceil(max(0, int(settings.watch_monitor_event_cooldown_seconds)) / 60),
         )
         self.store = JsonFileStore(settings.data_dir / "watch_rules.json", lambda: [])
+        self.migrate_legacy_rules()
+
+    def migrate_legacy_rules(self) -> int:
+        migrated_count = 0
+
+        def mutate(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            nonlocal migrated_count
+            for row in rows:
+                _, changed = self._normalize_rule_row(row)
+                if changed:
+                    migrated_count += 1
+            return rows
+
+        self.store.update(mutate)
+        return migrated_count
 
     def list_rules(self, *, item_id: Optional[str] = None) -> List[MonitorRuleRecord]:
         rows = self.store.read()
@@ -96,11 +114,12 @@ class WatchRuleStore:
                     "enabled": True,
                     "severity": "info",
                     "condition_group": _default_condition_group().model_dump(mode="json"),
-                    "market_hours_mode": "trading_only",
-                    "repeat_mode": "repeat",
+                    "notify_channel_ids": [],
+                    "market_hours_mode": DEFAULT_MARKET_HOURS_MODE,
+                    "repeat_mode": DEFAULT_REPEAT_MODE,
                     "expire_at": None,
                     "cooldown_minutes": self.default_cooldown_minutes,
-                    "max_triggers_per_day": 5,
+                    "max_triggers_per_day": DEFAULT_MAX_TRIGGERS_PER_DAY,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -151,6 +170,7 @@ class WatchRuleStore:
             "enabled": data.enabled,
             "severity": data.severity,
             "condition_group": data.condition_group.model_dump(mode="json"),
+            "notify_channel_ids": list(dict.fromkeys(data.notify_channel_ids)),
             "market_hours_mode": data.market_hours_mode,
             "repeat_mode": data.repeat_mode,
             "expire_at": data.expire_at.isoformat() if data.expire_at is not None else None,
@@ -184,6 +204,8 @@ class WatchRuleStore:
                     row["severity"] = patch["severity"]
                 if "condition_group" in patch and patch["condition_group"] is not None:
                     row["condition_group"] = patch["condition_group"].model_dump(mode="json")
+                if "notify_channel_ids" in patch and patch["notify_channel_ids"] is not None:
+                    row["notify_channel_ids"] = list(dict.fromkeys(str(item) for item in patch["notify_channel_ids"]))
                 if "market_hours_mode" in patch and patch["market_hours_mode"]:
                     row["market_hours_mode"] = patch["market_hours_mode"]
                 if "repeat_mode" in patch and patch["repeat_mode"]:
@@ -216,11 +238,67 @@ class WatchRuleStore:
             self.store.write(remaining)
         return removed
 
+    def remove_notification_channel_references(self, channel_id: str) -> int:
+        updated_count = 0
+
+        def mutate(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            nonlocal updated_count
+            for row in rows:
+                channel_ids = [str(item) for item in (row.get("notify_channel_ids") or [])]
+                filtered = [item for item in channel_ids if item != channel_id]
+                if filtered == channel_ids:
+                    continue
+                row["notify_channel_ids"] = filtered
+                row["updated_at"] = _utc_now_iso()
+                updated_count += 1
+            return rows
+
+        self.store.update(mutate)
+        return updated_count
+
     def _require_watch_item(self, item_id: str) -> WatchItemRecord:
         for item in repository.list_watchlist():
             if item.id == item_id:
                 return item
         raise WatchRuleStoreError("候选池里未找到对应股票，无法创建提醒规则")
+
+    def _normalize_rule_row(self, row: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
+        changed = False
+
+        notify_channel_ids = row.get("notify_channel_ids")
+        if isinstance(notify_channel_ids, list):
+            normalized_channel_ids = list(dict.fromkeys(str(item) for item in notify_channel_ids if str(item).strip()))
+        else:
+            normalized_channel_ids = []
+        if normalized_channel_ids != notify_channel_ids:
+            row["notify_channel_ids"] = normalized_channel_ids
+            changed = True
+
+        market_hours_mode = str(row.get("market_hours_mode") or "").strip()
+        if market_hours_mode not in {"trading_only", "always"}:
+            row["market_hours_mode"] = DEFAULT_MARKET_HOURS_MODE
+            changed = True
+
+        repeat_mode = str(row.get("repeat_mode") or "").strip()
+        if repeat_mode not in {"repeat", "once"}:
+            row["repeat_mode"] = DEFAULT_REPEAT_MODE
+            changed = True
+
+        if "expire_at" not in row:
+            row["expire_at"] = None
+            changed = True
+
+        cooldown_minutes = row.get("cooldown_minutes")
+        if not isinstance(cooldown_minutes, int) or cooldown_minutes < 0:
+            row["cooldown_minutes"] = self.default_cooldown_minutes
+            changed = True
+
+        max_triggers_per_day = row.get("max_triggers_per_day")
+        if not isinstance(max_triggers_per_day, int) or max_triggers_per_day < 0:
+            row["max_triggers_per_day"] = DEFAULT_MAX_TRIGGERS_PER_DAY
+            changed = True
+
+        return row, changed
 
 
 watch_rule_store = WatchRuleStore()

@@ -133,6 +133,9 @@ class Settings:
         _env("WATCH_MONITOR_EVENT_COOLDOWN_SECONDS", default="900")
     )
     watch_monitor_max_events: int = int(_env("WATCH_MONITOR_MAX_EVENTS", default="200"))
+    watch_notification_timeout_seconds: int = int(
+        _env("WATCH_NOTIFICATION_TIMEOUT_SECONDS", default="10")
+    )
     cors_origins: tuple[str, ...] = (
         "http://localhost:3000",
         "http://127.0.0.1:3000",

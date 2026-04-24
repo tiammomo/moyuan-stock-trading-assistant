@@ -12,6 +12,7 @@ from app.schemas.watchlist import WatchItemRecord
 
 from .json_store import JsonFileStore
 from .local_market_skill_client import LocalMarketSkillError, local_market_skill_client
+from .monitor_notifier import monitor_notifier
 from .repository import repository
 from .trading_calendar import trading_calendar
 from .watch_rule_store import watch_rule_store
@@ -487,6 +488,14 @@ class WatchMonitorService:
                 created_at=now,
             )
             self._append_event(event.model_dump(mode="json"))
+            try:
+                monitor_notifier.dispatch_rule_event(
+                    event,
+                    rule,
+                    fingerprint=fingerprint,
+                )
+            except Exception:
+                logger.exception("Watch monitor notification dispatch failed: rule=%s", rule.id)
             self._mark_rule_event(rule, fingerprint=fingerprint, now=now)
             emitted_events.append(event)
 

@@ -26,6 +26,12 @@ from app.schemas import (
     MonitorRuleCreate,
     MonitorRuleRecord,
     MonitorRuleUpdate,
+    MonitorNotificationChannelCreate,
+    MonitorNotificationChannelRecord,
+    MonitorNotificationChannelUpdate,
+    MonitorNotificationDeliveryRecord,
+    MonitorNotificationSettings,
+    MonitorNotificationSettingsUpdate,
     PortfolioAccountCreate,
     PortfolioAccountRecord,
     PortfolioScreenshotImportRequest,
@@ -61,6 +67,11 @@ from app.services.chat_engine import (
 )
 from app.services.llm_manager import llm_provider_manager
 from app.services.langgraph_stock_agent import langgraph_stock_agent
+from app.services.monitor_notification_store import (
+    MonitorNotificationStoreError,
+    monitor_notification_store,
+)
+from app.services.monitor_notifier import monitor_notifier
 from app.services.portfolio_screenshot_importer import (
     PortfolioScreenshotImportError,
     portfolio_screenshot_importer,
@@ -1270,6 +1281,73 @@ def backfill_watchlist_items():
 @app.get("/api/monitor/status", response_model=WatchMonitorStatus)
 def get_watch_monitor_status():
     return watch_monitor_service.get_status()
+
+
+@app.get("/api/monitor/notifications/channels", response_model=list[MonitorNotificationChannelRecord])
+def list_monitor_notification_channels():
+    return monitor_notification_store.list_channels()
+
+
+@app.post("/api/monitor/notifications/channels", response_model=MonitorNotificationChannelRecord)
+def create_monitor_notification_channel(data: MonitorNotificationChannelCreate):
+    try:
+        return monitor_notification_store.create_channel(data)
+    except MonitorNotificationStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch(
+    "/api/monitor/notifications/channels/{channel_id}",
+    response_model=MonitorNotificationChannelRecord,
+)
+def update_monitor_notification_channel(channel_id: str, update: MonitorNotificationChannelUpdate):
+    try:
+        channel = monitor_notification_store.update_channel(channel_id, update)
+    except MonitorNotificationStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Monitor notification channel not found")
+    return channel
+
+
+@app.delete("/api/monitor/notifications/channels/{channel_id}")
+def delete_monitor_notification_channel(channel_id: str):
+    deleted = monitor_notification_store.delete_channel(channel_id)
+    if deleted:
+        watch_rule_store.remove_notification_channel_references(channel_id)
+    return {"ok": deleted}
+
+
+@app.post(
+    "/api/monitor/notifications/channels/{channel_id}/test",
+    response_model=MonitorNotificationDeliveryRecord,
+)
+def test_monitor_notification_channel(channel_id: str):
+    try:
+        return monitor_notifier.send_test(channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/monitor/notifications/settings", response_model=MonitorNotificationSettings)
+def get_monitor_notification_settings():
+    return monitor_notification_store.get_settings()
+
+
+@app.patch("/api/monitor/notifications/settings", response_model=MonitorNotificationSettings)
+def update_monitor_notification_settings(update: MonitorNotificationSettingsUpdate):
+    try:
+        return monitor_notification_store.update_settings(update)
+    except MonitorNotificationStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/monitor/notifications/deliveries",
+    response_model=list[MonitorNotificationDeliveryRecord],
+)
+def list_monitor_notification_deliveries(limit: int = 20):
+    return monitor_notifier.list_recent_deliveries(limit=limit)
 
 
 @app.get("/api/monitor/rules", response_model=list[MonitorRuleRecord])

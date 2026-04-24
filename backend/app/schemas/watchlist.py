@@ -137,6 +137,7 @@ class MonitorRuleCreate(ContractModel):
     enabled: bool = True
     severity: Literal["info", "warning"] = "info"
     condition_group: MonitorRuleConditionGroup
+    notify_channel_ids: List[str] = Field(default_factory=list)
     market_hours_mode: Literal["trading_only", "always"] = "trading_only"
     repeat_mode: Literal["repeat", "once"] = "repeat"
     expire_at: Optional[datetime] = None
@@ -149,6 +150,7 @@ class MonitorRuleUpdate(ContractModel):
     enabled: Optional[bool] = None
     severity: Optional[Literal["info", "warning"]] = None
     condition_group: Optional[MonitorRuleConditionGroup] = None
+    notify_channel_ids: Optional[List[str]] = None
     market_hours_mode: Optional[Literal["trading_only", "always"]] = None
     repeat_mode: Optional[Literal["repeat", "once"]] = None
     expire_at: Optional[datetime] = None
@@ -166,6 +168,7 @@ class MonitorRuleRecord(ContractModel):
     enabled: bool = True
     severity: Literal["info", "warning"] = "info"
     condition_group: MonitorRuleConditionGroup
+    notify_channel_ids: List[str] = Field(default_factory=list)
     market_hours_mode: Literal["trading_only", "always"] = "trading_only"
     repeat_mode: Literal["repeat", "once"] = "repeat"
     expire_at: Optional[datetime] = None

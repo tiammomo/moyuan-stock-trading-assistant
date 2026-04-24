@@ -119,6 +119,7 @@ export interface MonitorRuleCreate {
   enabled: boolean;
   severity: "info" | "warning";
   condition_group: MonitorRuleConditionGroup;
+  notify_channel_ids: string[];
   market_hours_mode: MonitorRuleMarketHoursMode;
   repeat_mode: MonitorRuleRepeatMode;
   expire_at?: string | null;
@@ -131,6 +132,7 @@ export interface MonitorRuleUpdate {
   enabled?: boolean | null;
   severity?: "info" | "warning" | null;
   condition_group?: MonitorRuleConditionGroup | null;
+  notify_channel_ids?: string[] | null;
   market_hours_mode?: MonitorRuleMarketHoursMode | null;
   repeat_mode?: MonitorRuleRepeatMode | null;
   expire_at?: string | null;
@@ -148,6 +150,7 @@ export interface MonitorRuleRecord {
   enabled: boolean;
   severity: "info" | "warning";
   condition_group: MonitorRuleConditionGroup;
+  notify_channel_ids: string[];
   market_hours_mode: MonitorRuleMarketHoursMode;
   repeat_mode: MonitorRuleRepeatMode;
   expire_at?: string | null;

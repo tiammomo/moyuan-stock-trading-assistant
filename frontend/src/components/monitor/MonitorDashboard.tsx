@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/Card";
 import { toast } from "@/components/ui/Toast";
 import { MonitorRuleForm } from "@/components/monitor/MonitorRuleForm";
+import { useMonitorNotifications } from "@/hooks/useMonitorNotifications";
 import { useMonitorRules } from "@/hooks/useMonitorRules";
 import { useWatchMonitor } from "@/hooks/useWatchMonitor";
 import { useWatchlist } from "@/hooks/useWatchlist";
@@ -166,6 +167,10 @@ export function MonitorDashboard() {
     triggerScanAsync,
   } = useWatchMonitor();
   const { watchlist } = useWatchlist();
+  const { channels: notificationChannels } = useMonitorNotifications({
+    includeSettings: false,
+    includeDeliveries: false,
+  });
   const {
     rules: monitorRules,
     isLoading: isRulesLoading,
@@ -313,7 +318,7 @@ export function MonitorDashboard() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <CardTitle>提醒规则</CardTitle>
-              <CardDescription>支持多指标、交易时段、过期时间、重复模式、冷却和日上限</CardDescription>
+              <CardDescription>支持多指标、规则级通知渠道覆盖、交易时段、过期时间、重复模式、冷却和日上限</CardDescription>
             </div>
             <Button
               variant="outline"
@@ -340,11 +345,13 @@ export function MonitorDashboard() {
             </div>
           ) : (
             <div className="space-y-3">
-              {sortedRules.map((rule) => (
-                <div
-                  key={rule.id}
-                  className="rounded-2xl border border-border/70 bg-card/70 px-4 py-4"
-                >
+              {sortedRules.map((rule) => {
+                const notifyChannelIds = rule.notify_channel_ids ?? [];
+                return (
+                  <div
+                    key={rule.id}
+                    className="rounded-2xl border border-border/70 bg-card/70 px-4 py-4"
+                  >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -383,6 +390,11 @@ export function MonitorDashboard() {
                       </div>
                       <div className="text-sm leading-6 text-foreground/90">{ruleSummary(rule)}</div>
                       <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                        <span>
+                          {notifyChannelIds.length > 0
+                            ? `通知渠道 ${notifyChannelIds.length} 个`
+                            : "通知渠道使用默认配置"}
+                        </span>
                         <span>{MARKET_HOURS_LABELS[rule.market_hours_mode] || rule.market_hours_mode}</span>
                         <span>{REPEAT_MODE_LABELS[rule.repeat_mode] || rule.repeat_mode}</span>
                         <span>冷却 {rule.cooldown_minutes} 分钟</span>
@@ -407,8 +419,9 @@ export function MonitorDashboard() {
                       </Button>
                     </div>
                   </div>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -417,7 +430,7 @@ export function MonitorDashboard() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>最近盯盘事件</CardTitle>
-          <CardDescription>先展示事件流；下一步再扩通知渠道和一键分析</CardDescription>
+          <CardDescription>事件会沉淀到本地事件流，并按默认渠道或规则覆盖渠道推送</CardDescription>
         </CardHeader>
         <CardContent>
           {monitorEvents.length === 0 ? (
@@ -477,6 +490,7 @@ export function MonitorDashboard() {
         open={isRuleDialogOpen}
         onOpenChange={setIsRuleDialogOpen}
         watchlist={watchlist}
+        notificationChannels={notificationChannels.filter((channel) => channel.enabled)}
         initialRule={editingRule}
         onCreate={handleCreateRule}
         onUpdate={handleUpdateRule}
