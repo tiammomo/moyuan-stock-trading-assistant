@@ -850,7 +850,8 @@ data: {"event":"mode_detected","emitted_at":"2026-04-23T01:00:00Z","mode":"short
   - `between`
 - 第一版盯盘事件必须带上 `symbol / name / bucket / rule_id / rule_name / event_type / reasons / metrics / created_at`。
 - 盯盘事件必须按规则级冷却和每日上限控制，不能在短时间内重复刷出同一条规则事件。
-- 第一版盯盘事件先沉淀到本地事件流，不要求直接接入 Telegram / 飞书 / 企业微信等外部通知渠道。
+- 盯盘事件先沉淀到本地事件流，并支持通过默认渠道或规则级覆盖渠道发送外部通知。
+- 外部通知渠道当前支持 Bark、Webhook、PushPlus、企业微信机器人、钉钉机器人和 Telegram Bot。
 - 第一版盯盘事件不要求自动插入聊天消息；前端先在独立盯盘区页稳定展示状态、规则和事件流。
 
 ## 6. 后端行为契约

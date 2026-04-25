@@ -204,8 +204,18 @@ class MonitorNotificationStore:
         channel_type = str(raw.get("type") or "").strip()
         if not name:
             raise MonitorNotificationStoreError("通知渠道名称不能为空")
-        if channel_type not in {"bark", "webhook"}:
-            raise MonitorNotificationStoreError("通知渠道类型只支持 bark 或 webhook")
+        supported_types = {
+            "bark",
+            "webhook",
+            "pushplus",
+            "wecom_bot",
+            "dingtalk_bot",
+            "telegram_bot",
+        }
+        if channel_type not in supported_types:
+            raise MonitorNotificationStoreError(
+                "通知渠道类型只支持 Bark、Webhook、PushPlus、企业微信、钉钉或 Telegram"
+            )
 
         payload: Dict[str, Any] = {
             "name": name,
@@ -216,6 +226,11 @@ class MonitorNotificationStore:
             "bark_group": None,
             "bark_sound": None,
             "webhook_url": None,
+            "pushplus_token": None,
+            "wecom_webhook_url": None,
+            "dingtalk_webhook_url": None,
+            "telegram_bot_token": None,
+            "telegram_chat_id": None,
         }
 
         if channel_type == "bark":
@@ -234,6 +249,28 @@ class MonitorNotificationStore:
             if not webhook_url:
                 raise MonitorNotificationStoreError("Webhook 渠道必须填写回调地址")
             payload["webhook_url"] = webhook_url
+        elif channel_type == "pushplus":
+            pushplus_token = _clean_text(raw.get("pushplus_token"))
+            if not pushplus_token:
+                raise MonitorNotificationStoreError("PushPlus 渠道必须填写 token")
+            payload["pushplus_token"] = pushplus_token
+        elif channel_type == "wecom_bot":
+            wecom_webhook_url = _normalize_url(raw.get("wecom_webhook_url"))
+            if not wecom_webhook_url:
+                raise MonitorNotificationStoreError("企业微信机器人渠道必须填写 Webhook 地址")
+            payload["wecom_webhook_url"] = wecom_webhook_url
+        elif channel_type == "dingtalk_bot":
+            dingtalk_webhook_url = _normalize_url(raw.get("dingtalk_webhook_url"))
+            if not dingtalk_webhook_url:
+                raise MonitorNotificationStoreError("钉钉机器人渠道必须填写 Webhook 地址")
+            payload["dingtalk_webhook_url"] = dingtalk_webhook_url
+        elif channel_type == "telegram_bot":
+            telegram_bot_token = _clean_text(raw.get("telegram_bot_token"))
+            telegram_chat_id = _clean_text(raw.get("telegram_chat_id"))
+            if not telegram_bot_token or not telegram_chat_id:
+                raise MonitorNotificationStoreError("Telegram 渠道必须填写 Bot Token 和 Chat ID")
+            payload["telegram_bot_token"] = telegram_bot_token
+            payload["telegram_chat_id"] = telegram_chat_id
 
         return payload
 

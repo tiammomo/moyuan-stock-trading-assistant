@@ -6,7 +6,14 @@ from pydantic import Field
 from .common import ContractModel
 
 
-MonitorNotificationChannelType = Literal["bark", "webhook"]
+MonitorNotificationChannelType = Literal[
+    "bark",
+    "webhook",
+    "pushplus",
+    "wecom_bot",
+    "dingtalk_bot",
+    "telegram_bot",
+]
 MonitorNotificationDeliveryStatus = Literal["success", "failed", "skipped"]
 
 
@@ -19,6 +26,11 @@ class MonitorNotificationChannelCreate(ContractModel):
     bark_group: Optional[str] = None
     bark_sound: Optional[str] = None
     webhook_url: Optional[str] = None
+    pushplus_token: Optional[str] = None
+    wecom_webhook_url: Optional[str] = None
+    dingtalk_webhook_url: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
 
 
 class MonitorNotificationChannelUpdate(ContractModel):
@@ -30,6 +42,11 @@ class MonitorNotificationChannelUpdate(ContractModel):
     bark_group: Optional[str] = None
     bark_sound: Optional[str] = None
     webhook_url: Optional[str] = None
+    pushplus_token: Optional[str] = None
+    wecom_webhook_url: Optional[str] = None
+    dingtalk_webhook_url: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
 
 
 class MonitorNotificationChannelRecord(ContractModel):
@@ -42,6 +59,11 @@ class MonitorNotificationChannelRecord(ContractModel):
     bark_group: Optional[str] = None
     bark_sound: Optional[str] = None
     webhook_url: Optional[str] = None
+    pushplus_token: Optional[str] = None
+    wecom_webhook_url: Optional[str] = None
+    dingtalk_webhook_url: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

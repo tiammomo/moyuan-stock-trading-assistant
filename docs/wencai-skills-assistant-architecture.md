@@ -240,7 +240,7 @@ Zustand 负责：
 
 - 先把“候选池 -> 后台扫描 -> 事件流 -> 页面可见”闭环跑通
 - 不在当前阶段引入第二套监控股票池
-- 不提前把项目推进到 SQLAlchemy / APScheduler / 多通知渠道复杂度
+- 不提前把项目推进到 SQLAlchemy / APScheduler；通知渠道保持轻量 JSON 配置和 HTTP 推送适配
 - 结果聚合、主表选择、卡片生成和失败兜底
 - 单股咨询分支：
   - `_extract_security_subject()`
@@ -428,7 +428,7 @@ Zustand 负责：
 
 第一版有意不做的部分：
 
-- 不自动发外部通知
+- 可通过默认通知渠道或规则级覆盖渠道自动发外部通知
 - 不自动写入聊天消息
 - 不把 watchlist 替换成单独的 holdings / alerts 模型
 

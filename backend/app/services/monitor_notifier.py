@@ -84,21 +84,45 @@ class MonitorNotifier:
         *,
         fingerprint: str,
     ) -> List[MonitorNotificationDeliveryRecord]:
+        return self.dispatch_message(
+            channel_ids=rule.notify_channel_ids,
+            fingerprint=fingerprint,
+            title=event.title,
+            body=self._event_body(event, rule),
+            payload=self._event_payload(event, rule),
+            created_at=event.created_at,
+            event=event,
+            rule=rule,
+        )
+
+    def dispatch_message(
+        self,
+        *,
+        channel_ids: List[str],
+        fingerprint: str,
+        title: str,
+        body: str,
+        payload: Dict[str, Any],
+        created_at: Optional[datetime] = None,
+        event: Optional[WatchMonitorEvent] = None,
+        rule: Optional[MonitorRuleRecord] = None,
+    ) -> List[MonitorNotificationDeliveryRecord]:
         settings = monitor_notification_store.get_settings()
-        channel_ids = rule.notify_channel_ids or settings.default_channel_ids
-        channels = self._resolve_channels(channel_ids)
+        effective_channel_ids = channel_ids or settings.default_channel_ids
+        channels = self._resolve_channels(effective_channel_ids)
         if not channels:
             return []
 
-        now = event.created_at if event.created_at.tzinfo is not None else event.created_at.replace(tzinfo=CN_TZ)
+        now = created_at or datetime.now(CN_TZ)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=CN_TZ)
+        else:
+            now = now.astimezone(CN_TZ)
         quiet_hours = settings.quiet_hours_enabled and self._in_quiet_hours(
             now,
             settings.quiet_hours_start,
             settings.quiet_hours_end,
         )
-        title = event.title
-        body = self._event_body(event, rule)
-        payload = self._event_payload(event, rule)
         deliveries: List[MonitorNotificationDeliveryRecord] = []
         for channel in channels:
             dedupe_key = f"{channel.id}|{fingerprint}"
@@ -189,8 +213,8 @@ class MonitorNotifier:
     def _record_delivery(
         self,
         *,
-        event: WatchMonitorEvent,
-        rule: MonitorRuleRecord,
+        event: Optional[WatchMonitorEvent],
+        rule: Optional[MonitorRuleRecord],
         channel: MonitorNotificationChannelRecord,
         status: str,
         title: str,
@@ -200,11 +224,11 @@ class MonitorNotifier:
     ) -> MonitorNotificationDeliveryRecord:
         delivery = MonitorNotificationDeliveryRecord(
             id=f"nd_{uuid4().hex[:12]}",
-            event_id=event.id,
-            rule_id=rule.id,
-            rule_name=rule.rule_name,
-            symbol=event.symbol,
-            name=event.name,
+            event_id=event.id if event is not None else None,
+            rule_id=rule.id if rule is not None else None,
+            rule_name=rule.rule_name if rule is not None else None,
+            symbol=event.symbol if event is not None else None,
+            name=event.name if event is not None else None,
             channel_id=channel.id,
             channel_name=channel.name,
             channel_type=channel.type,
@@ -255,6 +279,14 @@ class MonitorNotifier:
                     self._send_bark(channel, title=str(message["title"]), body=str(message["body"]))
                 elif channel.type == "webhook":
                     self._send_webhook(channel, payload=message["payload"])
+                elif channel.type == "pushplus":
+                    self._send_pushplus(channel, title=str(message["title"]), body=str(message["body"]))
+                elif channel.type == "wecom_bot":
+                    self._send_wecom_bot(channel, title=str(message["title"]), body=str(message["body"]))
+                elif channel.type == "dingtalk_bot":
+                    self._send_dingtalk_bot(channel, title=str(message["title"]), body=str(message["body"]))
+                elif channel.type == "telegram_bot":
+                    self._send_telegram_bot(channel, title=str(message["title"]), body=str(message["body"]))
                 else:
                     raise ValueError(f"暂不支持的通知渠道类型：{channel.type}")
                 return attempts, None
@@ -316,6 +348,93 @@ class MonitorNotifier:
             status = getattr(response, "status", 200)
             if status >= 400:
                 raise ValueError(f"Webhook 返回 HTTP {status}")
+
+    def _send_pushplus(
+        self,
+        channel: MonitorNotificationChannelRecord,
+        *,
+        title: str,
+        body: str,
+    ) -> None:
+        if not channel.pushplus_token:
+            raise ValueError("PushPlus Token 未配置")
+        payload = {
+            "token": channel.pushplus_token,
+            "title": title,
+            "content": body.replace("\n", "<br>"),
+            "template": "html",
+        }
+        self._post_json("https://www.pushplus.plus/send", payload, service_name="PushPlus")
+
+    def _send_wecom_bot(
+        self,
+        channel: MonitorNotificationChannelRecord,
+        *,
+        title: str,
+        body: str,
+    ) -> None:
+        if not channel.wecom_webhook_url:
+            raise ValueError("企业微信机器人 Webhook 未配置")
+        self._post_json(
+            channel.wecom_webhook_url,
+            {
+                "msgtype": "markdown",
+                "markdown": {"content": f"**{title}**\n\n{body}"},
+            },
+            service_name="企业微信机器人",
+        )
+
+    def _send_dingtalk_bot(
+        self,
+        channel: MonitorNotificationChannelRecord,
+        *,
+        title: str,
+        body: str,
+    ) -> None:
+        if not channel.dingtalk_webhook_url:
+            raise ValueError("钉钉机器人 Webhook 未配置")
+        self._post_json(
+            channel.dingtalk_webhook_url,
+            {
+                "msgtype": "markdown",
+                "markdown": {"title": title, "text": f"### {title}\n\n{body}"},
+            },
+            service_name="钉钉机器人",
+        )
+
+    def _send_telegram_bot(
+        self,
+        channel: MonitorNotificationChannelRecord,
+        *,
+        title: str,
+        body: str,
+    ) -> None:
+        if not channel.telegram_bot_token or not channel.telegram_chat_id:
+            raise ValueError("Telegram Bot Token 或 Chat ID 未配置")
+        token = urllib.parse.quote(channel.telegram_bot_token, safe=":")
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        self._post_json(
+            url,
+            {
+                "chat_id": channel.telegram_chat_id,
+                "text": f"{title}\n\n{body}",
+                "disable_web_page_preview": True,
+            },
+            service_name="Telegram",
+        )
+
+    def _post_json(self, url: str, payload: Dict[str, Any], *, service_name: str) -> None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            status = getattr(response, "status", 200)
+            if status >= 400:
+                raise ValueError(f"{service_name} 返回 HTTP {status}")
 
     def _in_quiet_hours(self, now: datetime, start_text: str, end_text: str) -> bool:
         current = now.astimezone(CN_TZ).time()

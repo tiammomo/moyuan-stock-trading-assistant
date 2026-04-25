@@ -32,6 +32,10 @@ import type {
 const CHANNEL_TYPE_OPTIONS = [
   { value: "bark", label: "Bark" },
   { value: "webhook", label: "Webhook" },
+  { value: "pushplus", label: "PushPlus" },
+  { value: "wecom_bot", label: "企业微信机器人" },
+  { value: "dingtalk_bot", label: "钉钉机器人" },
+  { value: "telegram_bot", label: "Telegram Bot" },
 ];
 
 const CHANNEL_STATUS_OPTIONS = [
@@ -43,7 +47,12 @@ function channelSummary(channel: MonitorNotificationChannelRecord): string {
   if (channel.type === "bark") {
     return `${channel.bark_server_url || "-"} / ${channel.bark_device_key || "-"}`;
   }
-  return channel.webhook_url || "-";
+  if (channel.type === "webhook") return channel.webhook_url || "-";
+  if (channel.type === "pushplus") return channel.pushplus_token ? "PushPlus Token 已配置" : "-";
+  if (channel.type === "wecom_bot") return channel.wecom_webhook_url || "-";
+  if (channel.type === "dingtalk_bot") return channel.dingtalk_webhook_url || "-";
+  if (channel.type === "telegram_bot") return channel.telegram_chat_id || "-";
+  return "-";
 }
 
 export function MonitorNotificationSettings() {
@@ -73,6 +82,11 @@ export function MonitorNotificationSettings() {
   const [barkGroup, setBarkGroup] = useState("");
   const [barkSound, setBarkSound] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [pushplusToken, setPushplusToken] = useState("");
+  const [wecomWebhookUrl, setWecomWebhookUrl] = useState("");
+  const [dingtalkWebhookUrl, setDingtalkWebhookUrl] = useState("");
+  const [telegramBotToken, setTelegramBotToken] = useState("");
+  const [telegramChatId, setTelegramChatId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   const [defaultChannelIds, setDefaultChannelIds] = useState<string[]>([]);
@@ -107,6 +121,11 @@ export function MonitorNotificationSettings() {
     setBarkGroup("");
     setBarkSound("");
     setWebhookUrl("");
+    setPushplusToken("");
+    setWecomWebhookUrl("");
+    setDingtalkWebhookUrl("");
+    setTelegramBotToken("");
+    setTelegramChatId("");
     setFormError(null);
     setDialogOpen(true);
   };
@@ -121,6 +140,11 @@ export function MonitorNotificationSettings() {
     setBarkGroup(channel.bark_group || "");
     setBarkSound(channel.bark_sound || "");
     setWebhookUrl(channel.webhook_url || "");
+    setPushplusToken(channel.pushplus_token || "");
+    setWecomWebhookUrl(channel.wecom_webhook_url || "");
+    setDingtalkWebhookUrl(channel.dingtalk_webhook_url || "");
+    setTelegramBotToken(channel.telegram_bot_token || "");
+    setTelegramChatId(channel.telegram_chat_id || "");
     setFormError(null);
     setDialogOpen(true);
   };
@@ -140,6 +164,11 @@ export function MonitorNotificationSettings() {
         bark_group: barkGroup.trim() || null,
         bark_sound: barkSound.trim() || null,
         webhook_url: webhookUrl.trim() || null,
+        pushplus_token: pushplusToken.trim() || null,
+        wecom_webhook_url: wecomWebhookUrl.trim() || null,
+        dingtalk_webhook_url: dingtalkWebhookUrl.trim() || null,
+        telegram_bot_token: telegramBotToken.trim() || null,
+        telegram_chat_id: telegramChatId.trim() || null,
       };
       if (editingChannel) {
         await updateChannelAsync({ id: editingChannel.id, data: payload });
@@ -219,7 +248,7 @@ export function MonitorNotificationSettings() {
             <div>
               <CardTitle>盯盘通知</CardTitle>
               <CardDescription>
-                先支持 Bark 和 Webhook，包含默认渠道、规则级渠道覆盖、静默时段、失败重试和去重。
+                支持 Bark、Webhook、PushPlus、企业微信、钉钉和 Telegram，包含默认渠道、规则级渠道覆盖、静默时段、失败重试和去重。
               </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={openCreate}>
@@ -413,7 +442,7 @@ export function MonitorNotificationSettings() {
           <DialogHeader>
             <DialogTitle>{editingChannel ? "编辑通知渠道" : "新增通知渠道"}</DialogTitle>
             <DialogDescription>
-              第一版只支持 Bark 和 Webhook。规则可以覆盖默认渠道。
+              支持 Bark、Webhook、PushPlus、企业微信、钉钉和 Telegram。规则可以覆盖默认渠道。
             </DialogDescription>
           </DialogHeader>
           <DialogClose onClose={() => setDialogOpen(false)} />
@@ -460,11 +489,37 @@ export function MonitorNotificationSettings() {
                   <Input value={barkSound} onChange={(event) => setBarkSound(event.target.value)} />
                 </label>
               </div>
-            ) : (
+            ) : channelType === "webhook" ? (
               <label className="space-y-1 text-sm">
                 <span className="text-muted-foreground">Webhook URL</span>
                 <Input value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} />
               </label>
+            ) : channelType === "pushplus" ? (
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">PushPlus Token</span>
+                <Input value={pushplusToken} onChange={(event) => setPushplusToken(event.target.value)} />
+              </label>
+            ) : channelType === "wecom_bot" ? (
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">企业微信机器人 Webhook URL</span>
+                <Input value={wecomWebhookUrl} onChange={(event) => setWecomWebhookUrl(event.target.value)} />
+              </label>
+            ) : channelType === "dingtalk_bot" ? (
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">钉钉机器人 Webhook URL</span>
+                <Input value={dingtalkWebhookUrl} onChange={(event) => setDingtalkWebhookUrl(event.target.value)} />
+              </label>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm md:col-span-2">
+                  <span className="text-muted-foreground">Telegram Bot Token</span>
+                  <Input value={telegramBotToken} onChange={(event) => setTelegramBotToken(event.target.value)} />
+                </label>
+                <label className="space-y-1 text-sm md:col-span-2">
+                  <span className="text-muted-foreground">Telegram Chat ID</span>
+                  <Input value={telegramChatId} onChange={(event) => setTelegramChatId(event.target.value)} />
+                </label>
+              </div>
             )}
 
             {formError && (

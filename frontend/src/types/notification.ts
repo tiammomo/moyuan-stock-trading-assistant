@@ -1,4 +1,10 @@
-export type MonitorNotificationChannelType = "bark" | "webhook";
+export type MonitorNotificationChannelType =
+  | "bark"
+  | "webhook"
+  | "pushplus"
+  | "wecom_bot"
+  | "dingtalk_bot"
+  | "telegram_bot";
 export type MonitorNotificationDeliveryStatus = "success" | "failed" | "skipped";
 
 export interface MonitorNotificationChannelCreate {
@@ -10,6 +16,11 @@ export interface MonitorNotificationChannelCreate {
   bark_group?: string | null;
   bark_sound?: string | null;
   webhook_url?: string | null;
+  pushplus_token?: string | null;
+  wecom_webhook_url?: string | null;
+  dingtalk_webhook_url?: string | null;
+  telegram_bot_token?: string | null;
+  telegram_chat_id?: string | null;
 }
 
 export interface MonitorNotificationChannelUpdate {
@@ -21,6 +32,11 @@ export interface MonitorNotificationChannelUpdate {
   bark_group?: string | null;
   bark_sound?: string | null;
   webhook_url?: string | null;
+  pushplus_token?: string | null;
+  wecom_webhook_url?: string | null;
+  dingtalk_webhook_url?: string | null;
+  telegram_bot_token?: string | null;
+  telegram_chat_id?: string | null;
 }
 
 export interface MonitorNotificationChannelRecord {
@@ -33,6 +49,11 @@ export interface MonitorNotificationChannelRecord {
   bark_group?: string | null;
   bark_sound?: string | null;
   webhook_url?: string | null;
+  pushplus_token?: string | null;
+  wecom_webhook_url?: string | null;
+  dingtalk_webhook_url?: string | null;
+  telegram_bot_token?: string | null;
+  telegram_chat_id?: string | null;
   created_at: string;
   updated_at: string;
 }
