@@ -5,6 +5,7 @@ import {
   deletePortfolioAccount,
   deletePortfolioPosition,
   getPortfolioSummary,
+  importPortfolioCsv,
   importPortfolioScreenshot,
   updatePortfolioAccount,
   updatePortfolioPosition,
@@ -12,6 +13,7 @@ import {
 import type {
   PortfolioAccountCreate,
   PortfolioAccountUpdate,
+  PortfolioCsvImportRequest,
   PortfolioPositionCreate,
   PortfolioSummary,
   PortfolioPositionUpdate,
@@ -72,6 +74,11 @@ export function usePortfolio() {
     onSuccess: invalidate,
   });
 
+  const importCsvMutation = useMutation({
+    mutationFn: (data: PortfolioCsvImportRequest) => importPortfolioCsv(data),
+    onSuccess: invalidate,
+  });
+
   return {
     summary: summaryQuery.data ?? null,
     isLoading: summaryQuery.isLoading,
@@ -84,6 +91,7 @@ export function usePortfolio() {
     updatePositionAsync: updatePositionMutation.mutateAsync,
     deletePositionAsync: deletePositionMutation.mutateAsync,
     importScreenshotAsync: importScreenshotMutation.mutateAsync,
+    importCsvAsync: importCsvMutation.mutateAsync,
     isMutating:
       createAccountMutation.isPending ||
       updateAccountMutation.isPending ||
@@ -91,6 +99,7 @@ export function usePortfolio() {
       createPositionMutation.isPending ||
       updatePositionMutation.isPending ||
       deletePositionMutation.isPending ||
-      importScreenshotMutation.isPending,
+      importScreenshotMutation.isPending ||
+      importCsvMutation.isPending,
   };
 }

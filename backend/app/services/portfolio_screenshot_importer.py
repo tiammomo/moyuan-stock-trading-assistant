@@ -132,6 +132,12 @@ class PortfolioScreenshotImporter:
                     name=normalized.name,
                     cost_price=normalized.cost_price,
                     quantity=normalized.quantity,
+                    available_quantity=normalized.available_quantity,
+                    frozen_quantity=(
+                        max(normalized.quantity - normalized.available_quantity, 0)
+                        if normalized.available_quantity is not None
+                        else None
+                    ),
                     trading_style="swing",
                     note="截图导入",
                 ),
