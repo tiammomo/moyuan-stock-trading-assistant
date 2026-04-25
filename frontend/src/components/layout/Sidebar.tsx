@@ -11,6 +11,7 @@ const navItems = [
   { href: "/watchlist", label: "候选池", icon: "⭐" },
   { href: "/portfolio", label: "持仓账户", icon: "💼" },
   { href: "/monitor", label: "盯盘区", icon: "📡" },
+  { href: "/reports", label: "日报中心", icon: "📰" },
   { href: "/settings", label: "设置", icon: "⚙️" },
 ];
 

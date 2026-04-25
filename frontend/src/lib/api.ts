@@ -244,6 +244,42 @@ export async function getMonitorNotificationDeliveries(limit = 20) {
   );
 }
 
+export async function getScheduledReportJobs() {
+  return fetchApi<import("@/types/scheduledReport").ScheduledReportJobRecord[]>(
+    "/api/reports/jobs"
+  );
+}
+
+export async function updateScheduledReportJob(
+  reportType: import("@/types/scheduledReport").ScheduledReportType,
+  data: import("@/types/scheduledReport").ScheduledReportJobUpdate
+) {
+  return fetchApi<import("@/types/scheduledReport").ScheduledReportJobRecord>(
+    `/api/reports/jobs/${reportType}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function getScheduledReportRuns(limit = 20) {
+  return fetchApi<import("@/types/scheduledReport").ScheduledReportRunRecord[]>(
+    `/api/reports/runs?limit=${limit}`
+  );
+}
+
+export async function triggerScheduledReport(
+  reportType: import("@/types/scheduledReport").ScheduledReportType
+) {
+  return fetchApi<import("@/types/scheduledReport").ScheduledReportRunRecord>(
+    `/api/reports/jobs/${reportType}/trigger`,
+    {
+      method: "POST",
+    }
+  );
+}
+
 // Templates
 export async function getTemplates() {
   return fetchApi<import("@/types/template").TemplateRecord[]>("/api/templates");
@@ -332,6 +368,18 @@ export async function importPortfolioScreenshot(
 ) {
   return fetchApi<import("@/types/portfolio").PortfolioScreenshotImportResponse>(
     "/api/portfolio/import-screenshot",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function importPortfolioCsv(
+  data: import("@/types/portfolio").PortfolioCsvImportRequest
+) {
+  return fetchApi<import("@/types/portfolio").PortfolioCsvImportResponse>(
+    "/api/portfolio/import-csv",
     {
       method: "POST",
       body: JSON.stringify(data),

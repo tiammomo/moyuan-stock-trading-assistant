@@ -34,6 +34,8 @@ from app.schemas import (
     MonitorNotificationSettingsUpdate,
     PortfolioAccountCreate,
     PortfolioAccountRecord,
+    PortfolioCsvImportRequest,
+    PortfolioCsvImportResponse,
     PortfolioScreenshotImportRequest,
     PortfolioScreenshotImportResponse,
     PortfolioAccountUpdate,
@@ -41,6 +43,10 @@ from app.schemas import (
     PortfolioPositionRecord,
     PortfolioPositionUpdate,
     PortfolioSummary,
+    ScheduledReportJobRecord,
+    ScheduledReportJobUpdate,
+    ScheduledReportRunRecord,
+    ScheduledReportType,
     UserProfileUpdate,
     UserVisibleError,
     UserVisibleErrorSeverity,
@@ -72,12 +78,21 @@ from app.services.monitor_notification_store import (
     monitor_notification_store,
 )
 from app.services.monitor_notifier import monitor_notifier
+from app.services.portfolio_csv_importer import (
+    PortfolioCsvImportError,
+    portfolio_csv_importer,
+)
 from app.services.portfolio_screenshot_importer import (
     PortfolioScreenshotImportError,
     portfolio_screenshot_importer,
 )
 from app.services.portfolio_store import portfolio_store
 from app.services.repository import repository, short_title
+from app.services.scheduled_report_service import scheduled_report_service
+from app.services.scheduled_report_store import (
+    ScheduledReportStoreError,
+    scheduled_report_store,
+)
 from app.services.skill_registry import skill_registry
 from app.services.watchlist_chat import (
     detect_watchlist_add_intent,
@@ -111,10 +126,12 @@ app.add_middleware(
 async def start_background_services() -> None:
     watch_rule_store.ensure_default_rules(repository.list_watchlist())
     watch_monitor_service.start()
+    scheduled_report_service.start()
 
 
 @app.on_event("shutdown")
 async def stop_background_services() -> None:
+    await scheduled_report_service.shutdown()
     await watch_monitor_service.shutdown()
 
 
@@ -1245,6 +1262,14 @@ def import_portfolio_screenshot(data: PortfolioScreenshotImportRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/portfolio/import-csv", response_model=PortfolioCsvImportResponse)
+def import_portfolio_csv(data: PortfolioCsvImportRequest):
+    try:
+        return portfolio_csv_importer.import_csv(data)
+    except PortfolioCsvImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/watchlist")
 def list_watchlist():
     return repository.list_watchlist()
@@ -1315,6 +1340,7 @@ def delete_monitor_notification_channel(channel_id: str):
     deleted = monitor_notification_store.delete_channel(channel_id)
     if deleted:
         watch_rule_store.remove_notification_channel_references(channel_id)
+        scheduled_report_store.remove_notification_channel_references(channel_id)
     return {"ok": deleted}
 
 
@@ -1348,6 +1374,35 @@ def update_monitor_notification_settings(update: MonitorNotificationSettingsUpda
 )
 def list_monitor_notification_deliveries(limit: int = 20):
     return monitor_notifier.list_recent_deliveries(limit=limit)
+
+
+@app.get("/api/reports/jobs", response_model=list[ScheduledReportJobRecord])
+def list_scheduled_report_jobs():
+    return scheduled_report_service.list_jobs()
+
+
+@app.patch("/api/reports/jobs/{report_type}", response_model=ScheduledReportJobRecord)
+def update_scheduled_report_job(report_type: ScheduledReportType, update: ScheduledReportJobUpdate):
+    try:
+        job = scheduled_report_store.update_job(report_type, update)
+    except ScheduledReportStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scheduled report job not found")
+    return job
+
+
+@app.get("/api/reports/runs", response_model=list[ScheduledReportRunRecord])
+def list_scheduled_report_runs(limit: int = 20):
+    return scheduled_report_service.list_runs(limit=limit)
+
+
+@app.post("/api/reports/jobs/{report_type}/trigger", response_model=ScheduledReportRunRecord)
+async def trigger_scheduled_report(report_type: ScheduledReportType):
+    try:
+        return await scheduled_report_service.trigger(report_type, trigger="manual")
+    except ScheduledReportStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/monitor/rules", response_model=list[MonitorRuleRecord])
