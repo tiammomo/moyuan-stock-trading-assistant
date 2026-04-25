@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -352,6 +353,11 @@ export default function WatchlistPage() {
                   {formatTimestamp(item.created_at)}
                 </div>
                 <div className="flex gap-1">
+                  <Link href={`/stocks/${encodeURIComponent(item.symbol)}`}>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs">
+                      详情
+                    </Button>
+                  </Link>
                   <Button
                     variant="ghost"
                     size="sm"

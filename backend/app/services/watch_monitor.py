@@ -15,6 +15,7 @@ from .local_market_skill_client import LocalMarketSkillError, local_market_skill
 from .monitor_notifier import monitor_notifier
 from .repository import repository
 from .trading_calendar import trading_calendar
+from .watch_event_explainer import watch_event_explainer
 from .watch_rule_store import watch_rule_store
 
 
@@ -83,12 +84,27 @@ def _condition_label(condition_type: str) -> str:
         "pe_dynamic": "动态市盈率",
         "total_market_value": "总市值",
         "float_market_value": "流通市值",
+        "intraday_position_pct": "日内位置",
+        "gap_pct": "开盘跳空",
+        "price_vs_open_pct": "较开盘涨跌",
+        "upper_shadow_pct": "上影线幅度",
+        "lower_shadow_pct": "下影线幅度",
     }
     return mapping.get(condition_type, condition_type)
 
 
 def _format_target(condition_type: str, op: str, value: Any) -> str:
-    suffix = "%" if condition_type in {"change_pct", "weibi", "turnover_pct", "amplitude_pct"} else ""
+    suffix = "%" if condition_type in {
+        "change_pct",
+        "weibi",
+        "turnover_pct",
+        "amplitude_pct",
+        "intraday_position_pct",
+        "gap_pct",
+        "price_vs_open_pct",
+        "upper_shadow_pct",
+        "lower_shadow_pct",
+    } else ""
     if op == "between":
         if not isinstance(value, (list, tuple)) or len(value) != 2:
             return "介于无效区间"
@@ -112,6 +128,14 @@ def _event_type_for_condition_types(condition_types: List[str]) -> str:
         return "orderbook_bias"
     if "amplitude_pct" in condition_types:
         return "volatility"
+    if any(item in condition_types for item in (
+        "intraday_position_pct",
+        "gap_pct",
+        "price_vs_open_pct",
+        "upper_shadow_pct",
+        "lower_shadow_pct",
+    )):
+        return "technical_signal"
     if any(item in condition_types for item in ("pb", "pe_dynamic", "total_market_value", "float_market_value")):
         return "valuation_watch"
     return "watch_update"
@@ -160,6 +184,13 @@ def _build_rule_summary(
     amplitude_pct = metrics.get("amplitude_pct")
     if amplitude_pct is not None:
         bits.append(f"振幅 {amplitude_pct:.2f}%")
+    intraday_position_pct = metrics.get("intraday_position_pct")
+    if intraday_position_pct is not None:
+        bits.append(f"日内位置 {intraday_position_pct:.1f}%")
+    gap_pct = metrics.get("gap_pct")
+    if gap_pct is not None:
+        prefix = "+" if gap_pct >= 0 else ""
+        bits.append(f"开盘跳空 {prefix}{gap_pct:.2f}%")
 
     trigger_bits: List[str] = []
     for detail in matched_conditions:
@@ -168,11 +199,44 @@ def _build_rule_summary(
             f"{_format_target(str(detail.get('type') or ''), str(detail.get('op') or ''), detail.get('target'))}"
         )
     reason_text = "、".join(trigger_bits) or "满足条件"
-    metrics = "，".join(bits)
-    if metrics:
-        return f"命中规则「{rule.rule_name}」：{reason_text}；{metrics}。"
+    metrics_text = "，".join(bits)
+    if metrics_text:
+        return f"命中规则「{rule.rule_name}」：{reason_text}；{metrics_text}。"
     return f"命中规则「{rule.rule_name}」：{reason_text}。"
 
+
+def _pct_change(numerator: Optional[float], denominator: Optional[float]) -> Optional[float]:
+    if numerator is None or denominator in (None, 0):
+        return None
+    return (numerator - denominator) / denominator * 100
+
+
+def _build_derived_metrics(metrics: Dict[str, Optional[float]]) -> Dict[str, Optional[float]]:
+    latest_price = metrics.get("latest_price")
+    open_price = metrics.get("open_price")
+    prev_close = metrics.get("prev_close")
+    high_price = metrics.get("high_price")
+    low_price = metrics.get("low_price")
+    gap_pct = _pct_change(open_price, prev_close)
+    price_vs_open_pct = _pct_change(latest_price, open_price)
+    intraday_position_pct: Optional[float] = None
+    upper_shadow_pct: Optional[float] = None
+    lower_shadow_pct: Optional[float] = None
+    if high_price is not None and low_price is not None and high_price != low_price:
+        if latest_price is not None:
+            intraday_position_pct = (latest_price - low_price) / (high_price - low_price) * 100
+        if open_price is not None and latest_price is not None:
+            body_top = max(open_price, latest_price)
+            body_bottom = min(open_price, latest_price)
+            upper_shadow_pct = max(0, high_price - body_top) / (high_price - low_price) * 100
+            lower_shadow_pct = max(0, body_bottom - low_price) / (high_price - low_price) * 100
+    return {
+        "gap_pct": gap_pct,
+        "price_vs_open_pct": price_vs_open_pct,
+        "intraday_position_pct": intraday_position_pct,
+        "upper_shadow_pct": upper_shadow_pct,
+        "lower_shadow_pct": lower_shadow_pct,
+    }
 
 class WatchMonitorService:
     def __init__(self) -> None:
@@ -431,6 +495,10 @@ class WatchMonitorService:
         metrics = {
             "latest_price": snapshot.latest_price,
             "change_pct": snapshot.change_pct,
+            "open_price": snapshot.open_price,
+            "prev_close": snapshot.prev_close,
+            "high_price": snapshot.high_price,
+            "low_price": snapshot.low_price,
             "volume_ratio": snapshot.volume_ratio,
             "weibi": snapshot.weibi,
             "amount": snapshot.amount,
@@ -445,6 +513,7 @@ class WatchMonitorService:
             "total_market_value": snapshot.total_market_value,
             "float_market_value": snapshot.float_market_value,
         }
+        metrics.update(_build_derived_metrics(metrics))
         next_state = {
             "last_seen_at": _as_iso_or_none(now),
             **metrics,
@@ -487,6 +556,9 @@ class WatchMonitorService:
                 },
                 created_at=now,
             )
+            explanation = watch_event_explainer.explain(event, rule)
+            event.ai_explanation = explanation.get("ai_explanation")
+            event.action_hint = explanation.get("action_hint")
             self._append_event(event.model_dump(mode="json"))
             try:
                 monitor_notifier.dispatch_rule_event(

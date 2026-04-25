@@ -78,6 +78,8 @@ class WatchMonitorEvent(ContractModel):
     severity: str = "info"
     title: str
     summary: str
+    ai_explanation: Optional[str] = None
+    action_hint: Optional[str] = None
     reasons: List[str] = Field(default_factory=list)
     metrics: Dict[str, JsonValue] = Field(default_factory=dict)
     created_at: datetime
@@ -121,6 +123,11 @@ class MonitorRuleCondition(ContractModel):
         "pe_dynamic",
         "total_market_value",
         "float_market_value",
+        "intraday_position_pct",
+        "gap_pct",
+        "price_vs_open_pct",
+        "upper_shadow_pct",
+        "lower_shadow_pct",
     ]
     op: Literal[">", ">=", "<", "<=", "between"]
     value: JsonValue

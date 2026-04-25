@@ -28,6 +28,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   orderbook_bias: "盘口异动",
   volume_spike: "量能异动",
   volatility: "波动异动",
+  technical_signal: "技术形态",
   valuation_watch: "估值观察",
   watch_update: "行情变化",
 };
@@ -52,6 +53,11 @@ const EVENT_REASON_LABELS: Record<string, string> = {
   pe_dynamic: "动态市盈率",
   total_market_value: "总市值",
   float_market_value: "流通市值",
+  intraday_position_pct: "日内位置",
+  gap_pct: "开盘跳空",
+  price_vs_open_pct: "较开盘涨跌",
+  upper_shadow_pct: "上影线幅度",
+  lower_shadow_pct: "下影线幅度",
 };
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -70,6 +76,11 @@ const CONDITION_LABELS: Record<string, string> = {
   pe_dynamic: "动态市盈率",
   total_market_value: "总市值",
   float_market_value: "流通市值",
+  intraday_position_pct: "日内位置",
+  gap_pct: "开盘跳空",
+  price_vs_open_pct: "较开盘涨跌",
+  upper_shadow_pct: "上影线幅度",
+  lower_shadow_pct: "下影线幅度",
 };
 
 const SEVERITY_LABELS: Record<string, string> = {
@@ -96,7 +107,17 @@ function monitorReasonLabel(value: string): string {
 }
 
 function formatConditionTarget(condition: MonitorRuleCondition): string {
-  const suffix = ["change_pct", "weibi", "turnover_pct", "amplitude_pct"].includes(condition.type) ? "%" : "";
+  const suffix = [
+    "change_pct",
+    "weibi",
+    "turnover_pct",
+    "amplitude_pct",
+    "intraday_position_pct",
+    "gap_pct",
+    "price_vs_open_pct",
+    "upper_shadow_pct",
+    "lower_shadow_pct",
+  ].includes(condition.type) ? "%" : "";
   if (condition.op === "between" && Array.isArray(condition.value)) {
     const [start, end] = condition.value;
     return `${start}${suffix} 到 ${end}${suffix}`;
@@ -119,6 +140,7 @@ function renderEventBadges(event: WatchMonitorEvent) {
   const weibi = typeof event.metrics.weibi === "number" ? event.metrics.weibi : null;
   const turnoverPct = typeof event.metrics.turnover_pct === "number" ? event.metrics.turnover_pct : null;
   const amplitudePct = typeof event.metrics.amplitude_pct === "number" ? event.metrics.amplitude_pct : null;
+  const intradayPositionPct = typeof event.metrics.intraday_position_pct === "number" ? event.metrics.intraday_position_pct : null;
 
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -151,6 +173,11 @@ function renderEventBadges(event: WatchMonitorEvent) {
       {amplitudePct !== null && (
         <Badge variant="outline" className="text-[10px]">
           振幅 {amplitudePct.toFixed(2)}%
+        </Badge>
+      )}
+      {intradayPositionPct !== null && (
+        <Badge variant="outline" className="text-[10px]">
+          日内位置 {intradayPositionPct.toFixed(0)}%
         </Badge>
       )}
     </div>
@@ -473,6 +500,12 @@ export function MonitorDashboard() {
                         )}
                       </div>
                       <p className="mt-2 text-sm leading-6 text-foreground/90">{event.summary}</p>
+                      {(event.ai_explanation || event.action_hint) && (
+                        <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                          {event.ai_explanation && <div>AI 解释：{event.ai_explanation}</div>}
+                          {event.action_hint && <div className="mt-1">下一步：{event.action_hint}</div>}
+                        </div>
+                      )}
                       {renderEventBadges(event)}
                     </div>
                     <div className="shrink-0 text-xs text-muted-foreground">

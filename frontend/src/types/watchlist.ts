@@ -53,6 +53,8 @@ export interface WatchMonitorEvent {
   severity: string;
   title: string;
   summary: string;
+  ai_explanation?: string | null;
+  action_hint?: string | null;
   reasons: string[];
   metrics: Record<string, string | number | boolean | null>;
   created_at: string;
@@ -94,7 +96,12 @@ export type MonitorRuleConditionType =
   | "pb"
   | "pe_dynamic"
   | "total_market_value"
-  | "float_market_value";
+  | "float_market_value"
+  | "intraday_position_pct"
+  | "gap_pct"
+  | "price_vs_open_pct"
+  | "upper_shadow_pct"
+  | "lower_shadow_pct";
 
 export type MonitorRuleMarketHoursMode = "trading_only" | "always";
 

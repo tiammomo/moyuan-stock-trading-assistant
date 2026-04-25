@@ -59,6 +59,79 @@ const METRIC_OPTIONS: Array<{ value: MonitorRuleConditionType; label: string }> 
   { value: "pe_dynamic", label: "动态市盈率" },
   { value: "total_market_value", label: "总市值" },
   { value: "float_market_value", label: "流通市值" },
+  { value: "intraday_position_pct", label: "日内位置" },
+  { value: "gap_pct", label: "开盘跳空" },
+  { value: "price_vs_open_pct", label: "较开盘涨跌" },
+  { value: "upper_shadow_pct", label: "上影线幅度" },
+  { value: "lower_shadow_pct", label: "下影线幅度" },
+];
+
+const RULE_TEMPLATES: Array<{
+  id: string;
+  name: string;
+  description: string;
+  severity: "info" | "warning";
+  groupOp: "and" | "or";
+  conditions: ConditionRowState[];
+}> = [
+  {
+    id: "breakout_volume",
+    name: "放量强势突破",
+    description: "涨幅、量比和日内收盘位置同时偏强。",
+    severity: "warning",
+    groupOp: "and",
+    conditions: [
+      { type: "change_pct", op: ">=", value: "3", value2: "" },
+      { type: "volume_ratio", op: ">=", value: "1.8", value2: "" },
+      { type: "intraday_position_pct", op: ">=", value: "75", value2: "" },
+    ],
+  },
+  {
+    id: "gap_and_hold",
+    name: "跳空高开承接",
+    description: "高开后仍能站住开盘价，适合盘中确认承接。",
+    severity: "warning",
+    groupOp: "and",
+    conditions: [
+      { type: "gap_pct", op: ">=", value: "1.5", value2: "" },
+      { type: "price_vs_open_pct", op: ">=", value: "0", value2: "" },
+      { type: "intraday_position_pct", op: ">=", value: "60", value2: "" },
+    ],
+  },
+  {
+    id: "pullback_low_absorb",
+    name: "回踩低位承接",
+    description: "日内位置偏低但下影线明显，观察低吸承接。",
+    severity: "info",
+    groupOp: "and",
+    conditions: [
+      { type: "intraday_position_pct", op: "<=", value: "35", value2: "" },
+      { type: "lower_shadow_pct", op: ">=", value: "35", value2: "" },
+      { type: "turnover_pct", op: ">=", value: "2", value2: "" },
+    ],
+  },
+  {
+    id: "sell_pressure_shadow",
+    name: "冲高回落风险",
+    description: "上影线和振幅偏大，提示追高兑现压力。",
+    severity: "warning",
+    groupOp: "and",
+    conditions: [
+      { type: "upper_shadow_pct", op: ">=", value: "45", value2: "" },
+      { type: "amplitude_pct", op: ">=", value: "5", value2: "" },
+    ],
+  },
+  {
+    id: "valuation_watch",
+    name: "估值安全观察",
+    description: "PB 与动态 PE 同时落入较低区间，用于中线池提醒。",
+    severity: "info",
+    groupOp: "and",
+    conditions: [
+      { type: "pb", op: "<=", value: "2", value2: "" },
+      { type: "pe_dynamic", op: "between", value: "0", value2: "25" },
+    ],
+  },
 ];
 
 const OPERATOR_OPTIONS: Array<{ value: MonitorRuleConditionOperator; label: string }> = [
@@ -116,6 +189,10 @@ function emptyCondition(): ConditionRowState {
     value: "3",
     value2: "",
   };
+}
+
+function cloneConditions(conditions: ConditionRowState[]): ConditionRowState[] {
+  return conditions.map((condition) => ({ ...condition }));
 }
 
 function toConditionRows(rule?: MonitorRuleRecord | null): ConditionRowState[] {
@@ -219,6 +296,16 @@ export function MonitorRuleForm({
 
   const handleAddCondition = () => {
     setConditions((current) => [...current, emptyCondition()]);
+  };
+
+  const applyTemplate = (template: (typeof RULE_TEMPLATES)[number]) => {
+    if (!isEdit) {
+      setRuleName(template.name);
+    }
+    setSeverity(template.severity);
+    setGroupOp(template.groupOp);
+    setConditions(cloneConditions(template.conditions));
+    setFormError(null);
   };
 
   const handleRemoveCondition = (index: number) => {
@@ -460,6 +547,27 @@ export function MonitorRuleForm({
           </div>
 
           <div className="space-y-3">
+            {!isEdit && (
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+                <div className="text-sm font-medium">规则模板</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  参考 PanWatch 的技术形态/风险提醒思路，快速套用常见盯盘条件。
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {RULE_TEMPLATES.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className="rounded-xl border border-border/60 bg-background/60 px-3 py-2 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                      onClick={() => applyTemplate(template)}
+                    >
+                      <div className="text-sm font-medium">{template.name}</div>
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground">{template.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-sm font-medium">触发条件</div>
