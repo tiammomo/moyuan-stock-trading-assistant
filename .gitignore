@@ -1,0 +1,42 @@
+# Unified local env
+.env
+.env.*
+!.env.example
+
+# Legacy app-local env files
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Dependencies and virtualenvs
+node_modules/
+frontend/node_modules/
+.venv/
+backend/.venv/
+
+# Build artifacts
+.next/
+frontend/.next/
+dist/
+build/
+*.tsbuildinfo
+
+# Local runtime data
+backend/data/*.json
+backend/data/user_accounts/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local editor / agent settings
+.DS_Store
+.claude/settings.local.json
+
+# Logs and local locks
+*.log
+skills/.skills_store_lock.json
+
+# Local scratch files
+temp/
