@@ -121,10 +121,36 @@ class SourceRef(ContractModel):
     query: str
 
 
+class ChartDataPoint(ContractModel):
+    time: str
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    close: Optional[float] = None
+    volume: Optional[float] = None
+    ma5: Optional[float] = None
+    ma10: Optional[float] = None
+    ma20: Optional[float] = None
+    dif: Optional[float] = None
+    dea: Optional[float] = None
+    macd: Optional[float] = None
+    rsi: Optional[float] = None
+    k: Optional[float] = None
+    d: Optional[float] = None
+    j: Optional[float] = None
+
+
+class ChartConfig(ContractModel):
+    subject: Optional[str] = None
+    chart_types: List[str] = Field(default_factory=list)
+    items: List[ChartDataPoint] = Field(default_factory=list)
+
+
 class StructuredResult(ContractModel):
     summary: str = ""
     table: Optional[ResultTable] = None
     cards: List[ResultCard] = Field(default_factory=list)
+    chart_config: Optional[ChartConfig] = None
     facts: List[str] = Field(default_factory=list)
     judgements: List[str] = Field(default_factory=list)
     follow_ups: List[str] = Field(default_factory=list)

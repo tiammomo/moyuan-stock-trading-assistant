@@ -1,5 +1,7 @@
 from .chat import ChatCompareRequest, ChatFollowUpRequest, ChatRequest, ChatResponse, StreamEvent
 from .common import (
+    ChartConfig,
+    ChartDataPoint,
     CardType,
     ChatMode,
     ChatResponseStatus,
@@ -66,6 +68,8 @@ from .watchlist import WatchlistBackfillItemResult, WatchlistBackfillResponse
 
 __all__ = [
     "CardType",
+    "ChartConfig",
+    "ChartDataPoint",
     "ChatCompareRequest",
     "ChatFollowUpRequest",
     "ChatMessageRecord",

@@ -20,6 +20,21 @@ REALHEAD_URL = "https://d.10jqka.com.cn/v2/realhead/hs_{code}/last.js"
 ORDERBOOK_URL = "https://d.10jqka.com.cn/v2/fiverange/hs_{code}/last.js"
 TRADE_DETAIL_URL = "https://d.10jqka.com.cn/v2/exchangedetail/hs_{code}/last12.js"
 STOCKPAGE_URL = "https://stockpage.10jqka.com.cn/{code}/"
+EASTMONEY_KLINE_URL = (
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    "?secid={secid}&klt=101&fqt=1&lmt={limit}&beg=0&end=20500101"
+    "&ut=fa5fd1943c7b386f172d6893dbfba10b"
+    "&fields1=f1,f2,f3,f4,f5,f6"
+    "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+)
+TENCENT_KLINE_URL = (
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    "?param={symbol},day,,,{limit},qfq"
+)
+SINA_KLINE_URL = (
+    "https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_{symbol}_240_{limit}=/"
+    "CN_MarketData.getKLineData?symbol={symbol}&scale=240&ma=no&datalen={limit}"
+)
 
 
 class LocalMarketSkillError(RuntimeError):
@@ -139,6 +154,17 @@ class LocalThemeSnapshot:
 
 
 @dataclass
+class LocalKlineBar:
+    time: str
+    open_price: Optional[float] = None
+    close_price: Optional[float] = None
+    high_price: Optional[float] = None
+    low_price: Optional[float] = None
+    volume: Optional[float] = None
+    amount: Optional[float] = None
+
+
+@dataclass
 class LocalMarketContext:
     resolved: Optional[ResolvedSecurity] = None
     realhead: Optional[LocalRealheadSnapshot] = None
@@ -178,6 +204,19 @@ def _normalize_exchange(code: str) -> str:
 def _normalize_symbol(code: str) -> str:
     exchange = _normalize_exchange(code)
     return f"{code}.{exchange}" if exchange else code
+
+
+def _eastmoney_secid(code: str) -> str:
+    exchange = _normalize_exchange(code)
+    market = "1" if exchange == "SH" else "0"
+    return f"{market}.{code}"
+
+
+def _tencent_symbol(code: str) -> str:
+    exchange = _normalize_exchange(code).lower()
+    if exchange in {"sh", "sz", "bj"}:
+        return f"{exchange}{code}"
+    return code
 
 
 def _clean_text(value: str) -> Optional[str]:
@@ -417,6 +456,159 @@ class LocalMarketSkillClient:
             themes=themes,
             business=_truncate_text(_clean_text(business_text or ""), limit=180),
         )
+
+    def fetch_daily_kline(self, code: str, *, limit: int = 90) -> List[LocalKlineBar]:
+        normalized_code = self.resolve_security(code).code if not re.fullmatch(r"\d{6}", code) else code
+        try:
+            return self._fetch_daily_kline_eastmoney(normalized_code, limit=limit)
+        except LocalMarketSkillError as primary_error:
+            try:
+                return self._fetch_daily_kline_tencent(normalized_code, limit=limit)
+            except LocalMarketSkillError as fallback_error:
+                try:
+                    return self._fetch_daily_kline_sina(normalized_code, limit=limit)
+                except LocalMarketSkillError as second_fallback_error:
+                    raise LocalMarketSkillError(
+                        "K line sources failed: "
+                        f"eastmoney={primary_error}; tencent={fallback_error}; sina={second_fallback_error}"
+                    ) from second_fallback_error
+
+    def _fetch_daily_kline_eastmoney(self, normalized_code: str, *, limit: int) -> List[LocalKlineBar]:
+        url = EASTMONEY_KLINE_URL.format(secid=_eastmoney_secid(normalized_code), limit=max(limit, 30))
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Referer": "https://quote.eastmoney.com/",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise LocalMarketSkillError(f"HTTP {exc.code}: {url}") from exc
+        except urllib.error.URLError as exc:
+            raise LocalMarketSkillError(f"缃戠粶閿欒: {exc.reason}") from exc
+        except json.JSONDecodeError as exc:
+            raise LocalMarketSkillError("涓滄柟璐㈠瘜 K 绾挎帴鍙ｈ繑鍥炶В鏋愬け璐?") from exc
+
+        if not isinstance(payload, dict):
+            raise LocalMarketSkillError("东方财富 K 线返回格式异常")
+
+        klines = (((payload or {}).get("data") or {}).get("klines") or [])
+        if not isinstance(klines, list) or not klines:
+            raise LocalMarketSkillError("鏈嬁鍒板彲鐢ㄧ殑 K 绾挎暟鎹?")
+
+        bars: List[LocalKlineBar] = []
+        for line in klines:
+            if not isinstance(line, str):
+                continue
+            parts = line.split(",")
+            if len(parts) < 6:
+                continue
+            bars.append(
+                LocalKlineBar(
+                    time=str(parts[0]).strip(),
+                    open_price=_safe_float(parts[1]),
+                    close_price=_safe_float(parts[2]),
+                    high_price=_safe_float(parts[3]),
+                    low_price=_safe_float(parts[4]),
+                    volume=_safe_float(parts[5]),
+                    amount=_safe_float(parts[6]) if len(parts) > 6 else None,
+                )
+            )
+        if not bars:
+            raise LocalMarketSkillError("K 绾挎暟鎹负绌?")
+        return bars
+
+    def _fetch_daily_kline_tencent(self, normalized_code: str, *, limit: int) -> List[LocalKlineBar]:
+        symbol = _tencent_symbol(normalized_code)
+        url = TENCENT_KLINE_URL.format(symbol=symbol, limit=max(limit, 30))
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Referer": "https://gu.qq.com/",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise LocalMarketSkillError(f"HTTP {exc.code}: {url}") from exc
+        except urllib.error.URLError as exc:
+            raise LocalMarketSkillError(f"tencent kline network error: {exc.reason}") from exc
+        except json.JSONDecodeError as exc:
+            raise LocalMarketSkillError("tencent kline json parse failed") from exc
+
+        if not isinstance(payload, dict):
+            raise LocalMarketSkillError("tencent kline payload shape invalid")
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise LocalMarketSkillError("tencent kline data missing")
+        node = data.get(symbol) or data.get(normalized_code)
+        if not isinstance(node, dict):
+            raise LocalMarketSkillError("tencent kline symbol data missing")
+        rows = node.get("qfqday") or node.get("day") or []
+        if not isinstance(rows, list) or not rows:
+            raise LocalMarketSkillError("tencent kline rows missing")
+
+        bars: List[LocalKlineBar] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 6:
+                continue
+            bars.append(
+                LocalKlineBar(
+                    time=str(row[0]).strip(),
+                    open_price=_safe_float(row[1]),
+                    close_price=_safe_float(row[2]),
+                    high_price=_safe_float(row[3]),
+                    low_price=_safe_float(row[4]),
+                    volume=_safe_float(row[5]),
+                    amount=_safe_float(row[6]) if len(row) > 6 else None,
+                )
+            )
+        if not bars:
+            raise LocalMarketSkillError("tencent kline rows invalid")
+        return bars
+
+    def _fetch_daily_kline_sina(self, normalized_code: str, *, limit: int) -> List[LocalKlineBar]:
+        symbol = _tencent_symbol(normalized_code)
+        url = SINA_KLINE_URL.format(symbol=symbol, limit=max(limit, 30))
+        body = self._get_text(
+            url,
+            referer="https://finance.sina.com.cn/",
+        )
+        matched = re.search(r"=\s*(\[.*\])\s*;?\s*$", body, re.S)
+        if not matched:
+            raise LocalMarketSkillError("sina kline jsonp shape invalid")
+        try:
+            rows = json.loads(matched.group(1))
+        except json.JSONDecodeError as exc:
+            raise LocalMarketSkillError("sina kline json parse failed") from exc
+        if not isinstance(rows, list) or not rows:
+            raise LocalMarketSkillError("sina kline rows missing")
+
+        bars: List[LocalKlineBar] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            bars.append(
+                LocalKlineBar(
+                    time=str(row.get("day") or row.get("date") or "").strip(),
+                    open_price=_safe_float(row.get("open")),
+                    close_price=_safe_float(row.get("close")),
+                    high_price=_safe_float(row.get("high")),
+                    low_price=_safe_float(row.get("low")),
+                    volume=_safe_float(row.get("volume")),
+                    amount=_safe_float(row.get("amount")),
+                )
+            )
+        bars = [bar for bar in bars if bar.time and bar.open_price is not None and bar.close_price is not None]
+        if not bars:
+            raise LocalMarketSkillError("sina kline rows invalid")
+        return bars
 
 
 local_market_skill_client = LocalMarketSkillClient()

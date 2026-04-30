@@ -1,6 +1,6 @@
 # 问财 Skills 个人助手 Spec
 
-最后更新：2026-04-23
+最后更新：2026-04-29
 
 ## 1. 文档定位
 
@@ -259,6 +259,7 @@ type GptReasoningPolicy = "auto" | "medium" | "high" | "xhigh";
   "summary": "一句话结论",
   "table": null,
   "cards": [],
+  "chart_config": null,
   "facts": [],
   "judgements": [],
   "follow_ups": [],
@@ -276,7 +277,139 @@ type GptReasoningPolicy = "auto" | "medium" | "high" | "xhigh";
 - 若 GPT 分析增强已启用，只允许增强 `summary`、`judgements`、`follow_ups` 和 `operation_guidance` 卡片文案。
 - GPT 增强不得改写 `table`、`facts`、`sources`、卡片 `metadata`，不得新增未由问财或规则层提供的价格、新闻、指标。
 
-### 4.3.1 UserVisibleError
+### 4.3.3 ChartConfig
+
+`chart_config` 用于单股技术图表展示，后端负责返回真实 OHLCV 与技术指标，前端只负责渲染，不允许 LLM 生成或改写图表数据。
+
+```json
+{
+  "subject": "东阳光",
+  "chart_types": ["kline", "volume", "ma5", "ma10", "ma20", "macd", "rsi"],
+  "items": [
+    {
+      "time": "2026-04-25",
+      "open": 7.98,
+      "high": 8.04,
+      "low": 7.91,
+      "close": 7.93,
+      "volume": 1234567,
+      "ma5": 8.04,
+      "ma10": 8.05,
+      "ma20": 7.88,
+      "dif": -0.02,
+      "dea": -0.01,
+      "macd": -0.02,
+      "rsi": 35.1,
+      "k": 22.4,
+      "d": 28.1,
+      "j": 11.0
+    }
+  ]
+}
+```
+
+约束：
+- `chart_types` 第一版支持：`kline`、`volume`、`ma5`、`ma10`、`ma20`、`macd`、`rsi`、`kdj`。
+- `items` 必须来自真实行情历史数据与规则计算，不允许由 LLM 生成、补全或修改。
+- 命中“今天能不能买 / 能不能追 / 短线怎么看 / K线怎么看 / 趋势怎么样 / 放量缩量 / MACD / RSI / KDJ / 均线 / 布林带”等问法时，router 应优先把 `need_chart=true`，并给出对应 `chart_types`。
+- 如果图表数据缺失，回复中必须显式说明：`当前缺少 K 线 / 指标数据，因此短线判断置信度较低。`
+
+### 4.3.1 Single Stock Deep Research V1
+
+单股深度价值分析 V1 不新增 `CardType`，后端复用现有 contract：
+
+- `summary` 必须组织成研究报告式结构，至少包含一句话结论和 10 个章节：公司画像、当前行情状态、技术面信号、基本面质量、估值与现金流、行业位置、资金与筹码、消息事件、主要风险、小白观察清单。
+- `cards` 中允许新增 `type="custom"`、`title="单股深度研究 V1"` 的概览卡，`metadata.single_stock_research=true`，`metadata.dimensions` 记录 10 个维度的 `available` / `partial` / `missing` 状态。
+- 缺失维度必须在 `summary` 或 `judgements` 中显式说明：`当前缺少 XXX 数据，因此该部分判断置信度较低。`
+- harness 只做归类、覆盖检查、风险补充和操作结构补齐，不新增事实数据源；`facts`、`sources` 必须保持来自问财、同花顺本地补充或已有结构化结果。
+- 用户问“今天能不能买 / 能不能追 / 多少价格买 / 怎么操作 / 要不要止损”时，必须保留 `operation_guidance` 卡，并包含 `现在能不能追：`、`更好的买点：`、`失效条件：`、`止损/观察位：` 四段，同时必须有 `risk_warning` 卡。
+- 问题缺少具体股票时，例如“这只股票能买吗？”，必须追问股票名称或股票代码。
+- 不得输出收益承诺或绝对化用语，包括“稳赚”“必涨”“无风险”“一定上涨”“直接买入”“梭哈”“满仓”“保证收益”。遇到“明天哪只股票必涨？”这类问题，必须改为概率性、条件性和风险性分析。
+
+#### 4.3.1.1 ConversationPlan
+
+自然语言入口必须先经过 Conversation Router，输出结构化 `ConversationPlan` 后再进入具体 workflow。当前 `ConversationPlan` 字段契约：
+
+```ts
+type ConversationPlan = {
+  intent: string
+  workflow: string
+  stock_names: string[]
+  stock_codes: string[]
+  time_horizon: string | null
+  need_clarification: boolean
+  clarification_question: string | null
+  need_chart: boolean
+  chart_types: string[]
+  risk_level: "normal" | "high" | string
+  reason: string | null
+}
+```
+
+约束：
+
+- `ConversationPlan` 是后端内部路由契约，不直接暴露给前端，但其 `workflow`、`need_chart` 和 `chart_types` 必须决定后续 `RoutePlan` 与 `ChatResponse.chart_config`。
+- `stock_names` / `stock_codes` 可以为空；当用户问“这只股票能买吗”“主力和散户的情况”等但没有上下文股票时，必须设置 `need_clarification=true`。
+- `need_chart=true` 时，后端必须尽量返回 `chart_config`；若 K 线或指标序列缺失，必须在 `summary` 或 `judgements` 中明确说明图表缺失原因。
+- `risk_level="high"` 的高风险收益承诺问题不得进入问财 skill 链路，应直接返回安全兜底。
+
+#### 4.3.1.2 单股 Harness 输出框架
+
+单股相关问题必须由专用 harness 统一整理，不能让 LLM 自行发散模板。当前 harness 与触发场景：
+
+| harness | 触发问题 | summary 框架 |
+|---|---|---|
+| `single_stock_research_harness` | `小白怎么看宁德时代？`、`分析一下贵州茅台` | `深度研究框架`，覆盖 10 个维度 |
+| `short_term_operation_harness` | `东阳光今天能不能买？`、`宁德时代短线怎么看？`、`近5日价格分析` | `短线操作框架` 或 `近N日价格分析框架` |
+| `single_stock_value_harness` | `比亚迪中线价值如何？`、`贵州茅台估值贵不贵？`、`现金流和财报质量怎么样？` | `中线价值框架` |
+| `single_stock_long_term_harness` | `长期能不能拿？`、`护城河强不强？`、`分红和回购怎么样？` | `长期质量框架` |
+| `single_stock_capital_harness` | `主力和散户的情报`、`主力资金怎么看？`、`筹码稳不稳？` | `主力和散户筹码框架` |
+
+统一约束：
+
+- harness 只允许重组 `summary`、补充必要 `cards`、追加明确边界 `judgements` 和 `follow_ups`；不得改写 `facts`、`sources`、`table` 和已有事实字段。
+- 不得输出内部执行痕迹，例如 `个股行业题材`、`个股技术指标`、`覆盖状态`、`已覆盖`、`单股实时补充来自`、`研报搜索补充` 等。
+- 同一条回答中不得混用不相关框架。例如“主力和散户的情报”不得落回 `中线价值框架` 或只给 `操作建议`。
+- 缺失数据要说明“本次返回结果未覆盖 XXX”，不能写成公司永久缺少该数据。
+- 数字展示必须做格式化，价格和指标不得出现过长浮点数。
+
+#### 4.3.1.3 技术图表 ChartConfig
+
+单股短线、近几日价格分析、K 线/指标问题应返回统一 `chart_config`：
+
+```ts
+type ChartConfig = {
+  subject?: string | null
+  chart_types: string[]
+  items: Array<{
+    time: string
+    open?: number | null
+    high?: number | null
+    low?: number | null
+    close?: number | null
+    volume?: number | null
+    ma5?: number | null
+    ma10?: number | null
+    ma20?: number | null
+    dif?: number | null
+    dea?: number | null
+    macd?: number | null
+    rsi?: number | null
+    k?: number | null
+    d?: number | null
+    j?: number | null
+  }>
+}
+```
+
+约束：
+
+- 支持 `kline`、`volume`、`ma5`、`ma10`、`ma20`、`macd`、`rsi`、`kdj`。
+- 后端负责拉取 OHLCV 并计算技术指标；LLM 只能解释图表信号，不得生成、修改或猜测 K 线、价格、成交量、指标值。
+- 若文本已拿到今日 K 线或指标，但可视化图表未生成，应说明“当前未生成可视化 K 线图表”，不能误报“当前缺少 K 线 / 指标数据”。
+- 若确实没有 K 线和指标数据，应说明“当前缺少 K 线 / 指标数据，因此短线判断置信度较低。”
+
+### 4.3.2 UserVisibleError
 
 ```json
 {
@@ -860,6 +993,24 @@ data: {"event":"mode_detected","emitted_at":"2026-04-23T01:00:00Z","mode":"short
 
 函数：`detect_mode()`，位置：`backend/app/services/chat_engine.py`。
 
+`detect_mode()` 只负责兼容旧模式识别；自然语言入口的第一优先级是 `backend/app/services/conversation_router.py` 的 `route_message()`。`/api/chat` 主链路必须先生成 `ConversationPlan`，再根据 `workflow` 构造 `RoutePlan`。
+
+Conversation Router 判断优先级：
+
+1. 高风险收益承诺：包含 `必涨`、`稳赚`、`无风险`、`保证收益`、`梭哈`、`满仓` 时，走 `safety_response`。
+2. 模糊股票问题：`这只股票能买吗`、`现在能买吗` 且没有上下文股票时，走 `ask_clarification`。
+3. 多股票对比：两只或多只股票且有 `和/与/跟/vs/对比/比较/哪个好` 等比较意图时，走 `stock_compare`。
+4. 具体股票 + 短线操作词：`今天能不能买`、`能不能追`、`短线`、`止损`、`怎么操作`、`近N日价格分析`，走 `short_term_operation`。
+5. 具体股票 + 单股研究词：`分析`、`怎么看`、`小白`、`价值`、`中线`、`基本面`、`估值`、`财报`、`主力`、`散户`、`资金`、`筹码`，走 `single_stock_deep_research`。
+6. 行业 / 板块 / 大盘：走 `market_or_sector_analysis`。
+7. 股票知识解释：`PE 是什么意思`、`ROE 怎么看`、`放量什么意思`，走 `beginner_education`。
+8. 其他问题走 `generic_chat`。
+
+连接词例外：
+
+- `主力和散户`、`资金和筹码`、`现金流和财报`、`分红和回购` 这类是分析主题连接，不得误判成多股票对比。
+- `贵州茅台和五粮液哪个好？` 这类有两个股票主体，必须仍然走 `stock_compare`。
+
 优先级：
 
 1. `mode_hint`。
@@ -947,6 +1098,18 @@ data: {"event":"mode_detected","emitted_at":"2026-04-23T01:00:00Z","mode":"short
 - 单股执行顺序必须满足：`个股价格量能`、`个股技术指标`、`个股行业题材` 在前，`财报核心指标`、`估值现金流补充` 紧随其后，本地补充链路早于新闻/公告/研报补充。
 - 若用户输入的不是 6 位代码，系统允许在本地补充链路里先做股票名称到代码的解析。
 - 若单股问财子查询失败，但本地代码解析成功且 `同花顺行情快照` 可用，后端仍必须生成单股结果，不能直接退回“暂无数据”。
+
+资金筹码专项路由：
+
+- `主力`、`散户`、`资金`、`筹码`、`股东户数`、`前十大股东`、`机构持仓`、`持仓变化` 等问题必须走轻量 `capital_structure_route`，不得默认进入完整单股深度研究链路。
+- 轻量链路只允许请求：
+  - `个股资金量能`：最新价、涨跌幅、成交额、成交量、量比、换手率、主力资金净流入。
+  - `同花顺行情快照`：实时价量和盘口基础字段。
+  - `同花顺盘口分析`：五档盘口和逐笔成交。
+  - `公司股东股本查询`：股东户数、前十大股东、机构持仓、基金持仓、筹码集中度。
+- 资金筹码专项问题不得额外请求 `财报核心指标`、`估值现金流补充`、`研报搜索`、`公告搜索`，避免无关慢查询导致超时。
+- 输出必须由 `single_stock_capital_harness` 接管，标题为 `主力和散户筹码框架`。
+- 若本次没有返回股东户数或机构持仓，应在 `数据缺口` 中明确说明，不能把单日主力资金直接解释成散户增减或机构加减仓。
 
 单股持仓问题：
 
@@ -1656,6 +1819,21 @@ curl -s -o /tmp/session.out -w "%{http_code}" "http://127.0.0.1:8000/api/session
 - 关闭后的会话详情接口返回 `404`。
 - `localhost:3000` 和 `127.0.0.1:3000` 都能正常加载工作台。
 - 单股买点问题，如 `东阳光建议多少价格买入`，必须返回操作建议卡。
+- Conversation Router 验收：
+  - `小白怎么看宁德时代？` -> `single_stock_deep_research`。
+  - `东阳光今天能不能买？` -> `short_term_operation`，且 `need_chart=true`。
+  - `贵州茅台和五粮液哪个好？` -> `stock_compare`。
+  - `新能源板块怎么样？` -> `market_or_sector_analysis`。
+  - `PE 是什么意思？` -> `beginner_education`，不得返回图表。
+  - `这只股票能买吗？` -> `ask_clarification`。
+  - `明天哪只股票必涨？` -> `safety_response`。
+- 单股 harness 验收：
+  - `东阳光今天能不能买？` 必须输出 `短线操作框架`，包含 K 线/量能/技术指标/操作四段，并尽量返回 `chart_config`。
+  - `宁德时代近5日价格分析` 必须输出近N日价格分析框架；若图表生成失败，要区分“可视化图表缺失”和“指标数据缺失”。
+  - `比亚迪中线价值如何？`、`贵州茅台估值贵不贵？` 必须输出 `中线价值框架`。
+  - `贵州茅台长期能不能拿？`、`比亚迪护城河强不强？` 必须输出 `长期质量框架`。
+  - `宁德时代主力和散户的情报` 必须输出 `主力和散户筹码框架`，不得落回 `中线价值框架` 或泛化 `操作建议`。
+- 测试命令必须至少通过：`cd backend && uv run --with pytest pytest tests -q`。
 
 ## 12. 后续变更规则
 

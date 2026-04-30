@@ -1,4 +1,5 @@
 import type {
+  ChartConfig,
   ChatMode,
   ChatResponseStatus,
   JsonValue,
@@ -40,6 +41,7 @@ export interface ChatResponse {
   summary: string;
   table: ResultTable | null;
   cards: ResultCard[];
+  chart_config: ChartConfig | null;
   facts: string[];
   judgements: string[];
   follow_ups: string[];

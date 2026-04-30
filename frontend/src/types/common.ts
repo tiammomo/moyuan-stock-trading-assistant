@@ -94,10 +94,36 @@ export interface SourceRef {
   query: string;
 }
 
+export interface ChartDataPoint {
+  time: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+  ma5: number | null;
+  ma10: number | null;
+  ma20: number | null;
+  dif: number | null;
+  dea: number | null;
+  macd: number | null;
+  rsi: number | null;
+  k: number | null;
+  d: number | null;
+  j: number | null;
+}
+
+export interface ChartConfig {
+  subject: string | null;
+  chart_types: string[];
+  items: ChartDataPoint[];
+}
+
 export interface StructuredResult {
   summary: string;
   table: ResultTable | null;
   cards: ResultCard[];
+  chart_config: ChartConfig | null;
   facts: string[];
   judgements: string[];
   follow_ups: string[];

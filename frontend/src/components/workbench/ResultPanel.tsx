@@ -9,6 +9,7 @@ import { buildAutoWatchNote, buildAutoWatchTags } from "@/lib/watchlistAutoFill"
 import { ResultTable } from "@/components/results/ResultTable";
 import { ResultCards } from "@/components/results/ResultCards";
 import { ResultSummary } from "@/components/results/ResultSummary";
+import { TechnicalChartCard } from "@/components/results/TechnicalChartCard";
 import { SkillTracePanel } from "./SkillTracePanel";
 import { FollowUpSuggestions } from "./FollowUpSuggestions";
 import { Button } from "@/components/ui/Button";
@@ -54,9 +55,11 @@ export function ResultPanel() {
       (card) => !(priorityCardTypes.has(card.type) || card.title === "财报与基本面")
     ) || [];
   const hasTable = Boolean(currentResult?.table);
+  const hasChart = Boolean(currentResult?.chart_config?.items?.length);
   const hasSecondaryCards = secondaryCards.length > 0;
   const hasOverviewContent = !suppressOverviewForFailure && Boolean(
     currentResult?.judgements?.length ||
+      hasChart ||
       actionCards.length > 0 ||
       hasSecondaryCards ||
       hasTable
@@ -209,12 +212,14 @@ export function ResultPanel() {
             {hasOverviewContent ? (
               showStructuredCardsFirst ? (
                 <>
+                  {hasChart && currentResult?.chart_config && <TechnicalChartCard chartConfig={currentResult.chart_config} />}
                   {actionCards.length > 0 && <ResultCards cards={actionCards} />}
                   {hasSecondaryCards && <ResultCards cards={secondaryCards} />}
                   <ResultSummary result={currentResult} />
                 </>
               ) : (
                 <>
+                  {hasChart && currentResult?.chart_config && <TechnicalChartCard chartConfig={currentResult.chart_config} />}
                   <ResultSummary result={currentResult} />
                   {actionCards.length > 0 && <ResultCards cards={actionCards} />}
                 {resultViewMode === "table" && hasTable && (

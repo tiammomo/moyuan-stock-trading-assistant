@@ -59,13 +59,12 @@ from app.schemas import (
     WatchItemUpdate,
 )
 from app.services.chat_engine import (
-    build_route,
     compare_from_snapshot,
-    detect_mode,
     enhance_plan_result,
     execute_plan,
     execute_plan_base,
     is_compare_follow_up,
+    plan_chat_route,
     plan_follow_up_route,
     refine_follow_up_from_snapshot,
     result_to_chat_response,
@@ -365,8 +364,9 @@ def _complete_chat(request: ChatRequest):
     try:
         profile = repository.get_profile()
         session_summary = repository.get_session_summary(request.session_id) if request.session_id else None
-        detection = detect_mode(
+        detection, route, routed_message, _, direct_result = plan_chat_route(
             request.message,
+            profile=profile,
             mode_hint=request.mode_hint,
             session_mode=session_summary.mode if session_summary else None,
         )
@@ -383,11 +383,31 @@ def _complete_chat(request: ChatRequest):
             }
         )
 
-        route = build_route(request.message, detection.mode, profile)
+        if direct_result is not None:
+            assistant_message = repository.add_message(
+                {
+                    "session_id": session.id,
+                    "parent_message_id": user_message.id,
+                    "role": "assistant",
+                    "content": direct_result.summary,
+                    "mode": detection.mode.value,
+                    "skills_used": [],
+                    "result_snapshot": direct_result.model_dump(mode="json"),
+                    "status": ChatResponseStatus.COMPLETED.value,
+                }
+            )
+            return detection, route, result_to_chat_response(
+                session_id=session.id,
+                message_id=assistant_message.id,
+                mode=detection.mode,
+                result=direct_result,
+                skills_used=[],
+            )
+
         result, skills_used, rewritten_query, user_visible_error = execute_plan(
             route,
             profile,
-            user_message=request.message,
+            user_message=routed_message,
         )
         assistant_message = repository.add_message(
             {
@@ -536,8 +556,10 @@ def _stream_chat(request: ChatRequest):
         try:
             yield sse_payload("analysis_started", {"status": "analyzing"})
             session_summary = repository.get_session_summary(request.session_id) if request.session_id else None
-            detection = detect_mode(
+            profile = repository.get_profile()
+            detection, route, routed_message, _, direct_result = plan_chat_route(
                 request.message,
+                profile=profile,
                 mode_hint=request.mode_hint,
                 session_mode=session_summary.mode if session_summary else None,
             )
@@ -546,7 +568,6 @@ def _stream_chat(request: ChatRequest):
                 {"mode": detection.mode.value, "confidence": detection.confidence, "source": detection.source},
             )
 
-            profile = repository.get_profile()
             session = repository.ensure_session(request.session_id, request.message, detection.mode)
             repository.touch_session(session.id, title=short_title(request.message), mode=detection.mode)
             user_message = repository.add_message(
@@ -559,7 +580,20 @@ def _stream_chat(request: ChatRequest):
                 }
             )
 
-            route = build_route(request.message, detection.mode, profile)
+            if direct_result is not None:
+                yield sse_payload("partial_result", direct_result.model_dump(mode="json"))
+                _, response = _persist_assistant_response(
+                    session_id=session.id,
+                    parent_message_id=user_message.id,
+                    mode=detection.mode,
+                    result=direct_result,
+                    skills_used=[],
+                    rewritten_query="",
+                    user_visible_error=None,
+                )
+                yield sse_payload("completed", response.model_dump(mode="json"))
+                return
+
             yield sse_payload(
                 "skill_routing_ready",
                 {
@@ -576,7 +610,7 @@ def _stream_chat(request: ChatRequest):
             result, skills_used, rewritten_query, user_visible_error, should_enhance = execute_plan_base(
                 route,
                 profile,
-                user_message=request.message,
+                user_message=routed_message,
             )
             for skill in skills_used:
                 yield sse_payload("skill_finished", skill.model_dump(mode="json"))
@@ -599,7 +633,7 @@ def _stream_chat(request: ChatRequest):
                 mode=detection.mode,
                 route=route,
                 profile=profile,
-                user_message=request.message,
+                user_message=routed_message,
                 result=result,
                 skills_used=skills_used,
                 rewritten_query=rewritten_query,
@@ -730,12 +764,33 @@ def _complete_follow_up(request: ChatFollowUpRequest):
             )
 
         profile = repository.get_profile()
-        detection, route, contextual_message = plan_follow_up_route(
+        detection, route, contextual_message, direct_result = plan_follow_up_route(
             request.message,
             parent,
             session_mode=session_summary.mode if session_summary else None,
             profile=profile,
         )
+        if direct_result is not None:
+            assistant_message = repository.add_message(
+                {
+                    "session_id": request.session_id,
+                    "parent_message_id": user_message.id,
+                    "role": "assistant",
+                    "content": direct_result.summary,
+                    "mode": response_mode.value,
+                    "skills_used": [],
+                    "result_snapshot": direct_result.model_dump(mode="json"),
+                    "status": ChatResponseStatus.COMPLETED.value,
+                }
+            )
+            return detection, route, result_to_chat_response(
+                session_id=request.session_id,
+                message_id=assistant_message.id,
+                mode=response_mode,
+                result=direct_result,
+                skills_used=[],
+            )
+
         result, skills_used, rewritten_query, user_visible_error = execute_plan(
             route,
             profile,
@@ -894,7 +949,7 @@ def _stream_follow_up(request: ChatFollowUpRequest):
                 return
 
             profile = repository.get_profile()
-            detection, route, contextual_message = plan_follow_up_route(
+            detection, route, contextual_message, direct_result = plan_follow_up_route(
                 request.message,
                 parent,
                 session_mode=session_summary.mode if session_summary else None,
@@ -904,6 +959,24 @@ def _stream_follow_up(request: ChatFollowUpRequest):
                 "mode_detected",
                 {"mode": detection.mode.value, "confidence": detection.confidence, "source": detection.source},
             )
+            if direct_result is not None:
+                yield sse_payload(
+                    "skill_routing_ready",
+                    {"strategy": "direct_response", "skills": []},
+                )
+                yield sse_payload("partial_result", direct_result.model_dump(mode="json"))
+                assistant_message, response = _persist_assistant_response(
+                    session_id=request.session_id,
+                    parent_message_id=user_message.id,
+                    mode=response_mode,
+                    result=direct_result,
+                    skills_used=[],
+                    rewritten_query="",
+                    user_visible_error=None,
+                )
+                yield sse_payload("completed", response.model_dump(mode="json"))
+                return
+
             yield sse_payload(
                 "skill_routing_ready",
                 {

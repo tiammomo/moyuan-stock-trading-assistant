@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from pydantic import Field
 
 from .common import (
+    ChartConfig,
     ChatMode,
     ChatResponseStatus,
     ContractModel,
@@ -47,6 +48,7 @@ class ChatResponse(ContractModel):
     summary: str = ""
     table: Optional[ResultTable] = None
     cards: List[ResultCard] = Field(default_factory=list)
+    chart_config: Optional[ChartConfig] = None
     facts: List[str] = Field(default_factory=list)
     judgements: List[str] = Field(default_factory=list)
     follow_ups: List[str] = Field(default_factory=list)

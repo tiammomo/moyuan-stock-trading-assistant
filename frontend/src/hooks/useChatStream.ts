@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ChatFollowUpRequest,
   ChatRequest,
@@ -155,6 +155,7 @@ function buildResultSnapshot(
     summary,
     table: accumulatedResult.table || null,
     cards: accumulatedResult.cards || [],
+    chart_config: accumulatedResult.chart_config || null,
     facts: accumulatedResult.facts || [],
     judgements: accumulatedResult.judgements || [],
     follow_ups: accumulatedResult.follow_ups || [],
@@ -200,6 +201,7 @@ function buildFailedResponse(
     summary,
     table: accumulatedResult.table || null,
     cards: accumulatedResult.cards || [],
+    chart_config: accumulatedResult.chart_config || null,
     facts: accumulatedResult.facts || [],
     judgements: accumulatedResult.judgements || [],
     follow_ups: accumulatedResult.follow_ups || [],
@@ -244,6 +246,10 @@ function buildCompletedResponse(
       (Array.isArray(data.cards) ? (data.cards as unknown as ChatResponse["cards"]) : null) ||
       accumulatedResult.cards ||
       [],
+    chart_config:
+      ((data.chart_config as ChatResponse["chart_config"] | undefined) ?? undefined) ||
+      accumulatedResult.chart_config ||
+      null,
     facts:
       (Array.isArray(data.facts) ? (data.facts as unknown as ChatResponse["facts"]) : null) ||
       accumulatedResult.facts ||
@@ -307,7 +313,8 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
   const executeStream = useCallback(
     async ({ endpoint, body, userMessage }: StreamExecutionRequest) => {
       abortControllerRef.current?.abort();
-      abortControllerRef.current = new AbortController();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
       let assistantPlaceholderCreated = false;
       const userMessageId = `msg_${Date.now()}`;
       const assistantPlaceholderId = `msg_${Date.now()}_assistant`;
@@ -333,7 +340,7 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...body, stream: true }),
-          signal: abortControllerRef.current.signal,
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -441,6 +448,7 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
                   }
                   if (data.table) accumulatedResult.table = data.table;
                   if (data.cards) accumulatedResult.cards = data.cards;
+                  if (data.chart_config) accumulatedResult.chart_config = data.chart_config;
                   if (data.facts) accumulatedResult.facts = data.facts;
                   if (data.judgements) accumulatedResult.judgements = data.judgements;
                   if (data.follow_ups) accumulatedResult.follow_ups = data.follow_ups;
@@ -453,6 +461,7 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
                         typeof accumulatedResult.summary === "string" ? accumulatedResult.summary : "",
                       table: accumulatedResult.table || null,
                       cards: accumulatedResult.cards || [],
+                      chart_config: accumulatedResult.chart_config || null,
                       facts: accumulatedResult.facts || [],
                       judgements: accumulatedResult.judgements || [],
                       follow_ups: accumulatedResult.follow_ups || [],
@@ -559,6 +568,10 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
         }
         showChatToast(failedError);
         options.onError?.(err as Error);
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
       }
     },
     [
@@ -606,8 +619,18 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
 
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setStreamingState("idle");
     setStreamingStatus("idle");
+  }, [setStreamingStatus]);
+
+  useEffect(() => {
+    return () => {
+      if (!abortControllerRef.current) return;
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setStreamingStatus("idle");
+    };
   }, [setStreamingStatus]);
 
   return {

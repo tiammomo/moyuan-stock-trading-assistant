@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import logging
 import math
 import re
 from typing import Any, Dict, Iterable, List, Optional
@@ -16,6 +17,7 @@ from app.schemas import (
     GptReasoningPolicy,
     ResultCard,
     ResultTable,
+    ChartConfig,
     SkillRunStatus,
     SkillStrategy,
     SkillUsage,
@@ -60,9 +62,25 @@ from .local_market_skill_client import (
     local_market_skill_client,
 )
 from .langgraph_stock_agent import langgraph_stock_agent
+from .technical_chart_service import build_chart_config
 from .wencai_client import WencaiClientError, wencai_client
 from .openai_client import OpenAIClientError, openai_analysis_client
 from .sim_trading_client import SimTradingClientError, SimTradingHoldingContext, sim_trading_client
+from .conversation_router import ConversationPlan, direct_response_for_plan, route_message
+from .single_stock_research_harness import (
+    enhance_single_stock_research,
+    extract_deep_research_subject,
+    preflight_single_stock_research,
+)
+from .single_stock_capital_harness import enhance_single_stock_capital
+from .single_stock_value_harness import enhance_single_stock_value
+from .single_stock_long_term_harness import enhance_single_stock_long_term
+from .short_term_operation_harness import enhance_short_term_operation
+
+
+logger = logging.getLogger(__name__)
+MISSING_CHART_JUDGEMENT = "当前缺少 K 线 / 指标数据，因此短线判断置信度较低。"
+MISSING_VISUAL_CHART_JUDGEMENT = "当前未生成可视化 K 线图表；文字分析仅基于已返回的行情快照、K 线描述和技术指标。"
 
 
 @dataclass
@@ -89,6 +107,8 @@ class RoutePlan:
     single_security: bool = False
     entry_price_focus: bool = False
     holding_context_focus: bool = False
+    need_chart: bool = False
+    chart_types: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -300,7 +320,7 @@ def detect_mode(
             return ModeDetection(ChatMode.COMPARE, 0.95, "rule")
         return ModeDetection(ChatMode.FOLLOW_UP, 0.9, "rule")
 
-    subject = _extract_security_subject(message)
+    subject = extract_deep_research_subject(message) or _extract_security_subject(message)
     explicit_mode = _explicit_mode_from_message(message)
     preferred_mode_hint = (
         mode_hint
@@ -506,6 +526,8 @@ def _single_security_route(
     *,
     entry_price_focus: bool = False,
     holding_context_focus: bool = False,
+    need_chart: bool = False,
+    chart_types: Optional[List[str]] = None,
 ) -> RoutePlan:
     snapshot_plans = _build_single_security_snapshot_plans(subject, mode)
     fundamental_plans = _build_single_security_fundamental_plans(subject)
@@ -522,6 +544,8 @@ def _single_security_route(
             single_security=True,
             entry_price_focus=entry_price_focus,
             holding_context_focus=holding_context_focus,
+            need_chart=need_chart,
+            chart_types=list(chart_types or []),
             skills=[
                 *snapshot_plans,
                 *fundamental_plans,
@@ -539,6 +563,8 @@ def _single_security_route(
             single_security=True,
             entry_price_focus=entry_price_focus,
             holding_context_focus=holding_context_focus,
+            need_chart=need_chart,
+            chart_types=list(chart_types or []),
             skills=[
                 *snapshot_plans,
                 *fundamental_plans,
@@ -555,12 +581,42 @@ def _single_security_route(
         single_security=True,
         entry_price_focus=entry_price_focus,
         holding_context_focus=holding_context_focus,
+        need_chart=need_chart,
+        chart_types=list(chart_types or []),
         skills=[
             *snapshot_plans,
             *fundamental_plans,
             *local_plans,
             _skill_plan(SKILL_SEARCH_NEWS, f"{subject} 新闻", "补充近期新闻催化"),
             _skill_plan(SKILL_SEARCH_ANNOUNCEMENT, f"{subject} 公告", "补充最新公告"),
+        ],
+    )
+
+
+def _capital_structure_route(subject: str) -> RoutePlan:
+    return RoutePlan(
+        mode=ChatMode.MID_TERM_VALUE,
+        strategy=SkillStrategy.RESEARCH_EXPAND,
+        subject=subject,
+        single_security=True,
+        entry_price_focus=False,
+        holding_context_focus=False,
+        need_chart=False,
+        chart_types=[],
+        skills=[
+            _skill_plan(
+                SKILL_WENCAI_SINGLE_SECURITY_SNAPSHOT,
+                f"{subject} 最新价 涨跌幅 成交额 成交量 量比 换手率 主力资金净流入",
+                "获取主力资金、成交和换手快照",
+                name="个股资金量能",
+            ),
+            _skill_plan(SKILL_LOCAL_REALHEAD, subject, "补充最新价、量比、换手和盘口基础数据"),
+            _skill_plan(SKILL_LOCAL_ORDERBOOK, subject, "补充五档盘口和逐笔成交"),
+            _skill_plan(
+                SKILL_WENCAI_SHAREHOLDER_QUERY,
+                f"{subject} 股东户数 前十大股东 机构持仓 基金持仓 筹码集中度",
+                "补充股东户数、机构持仓和筹码信息",
+            ),
         ],
     )
 
@@ -630,17 +686,31 @@ def _generic_query_route(
     )
 
 
+def _is_bare_subject_query(message: str, subject: str) -> bool:
+    text = re.sub(r"\s+", "", str(message or "")).strip("，。！？?；:： ")
+    normalized_subject = re.sub(r"\s+", "", str(subject or "")).strip("，。！？?；:： ")
+    return bool(text and normalized_subject and text == normalized_subject)
+
+
 def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan:
     limit = profile.default_result_size or 5
-    subject = _extract_security_subject(message)
+    subject = extract_deep_research_subject(message) or _extract_security_subject(message)
     entry_price_focus = _is_entry_price_question(message)
     holding_context_focus = _is_holding_question(message)
     if subject and mode in {ChatMode.SHORT_TERM, ChatMode.SWING, ChatMode.MID_TERM_VALUE}:
+        conversation_plan = route_message(message)
+        bare_subject_query = _is_bare_subject_query(message, subject)
+        chart_requested = conversation_plan.need_chart or bare_subject_query
+        chart_types = conversation_plan.chart_types
+        if chart_requested and not chart_types:
+            chart_types = ["kline", "volume", "ma5", "ma10", "ma20", "macd", "rsi", "kdj"]
         return _single_security_route(
             subject,
             mode,
             entry_price_focus=entry_price_focus,
             holding_context_focus=holding_context_focus,
+            need_chart=chart_requested,
+            chart_types=chart_types,
         )
 
     if mode == ChatMode.SHORT_TERM:
@@ -688,6 +758,127 @@ def build_route(message: str, mode: ChatMode, profile: UserProfile) -> RoutePlan
         entry_price_focus=entry_price_focus,
         holding_context_focus=holding_context_focus,
     )
+
+
+def _stock_compare_route(message: str, plan: ConversationPlan) -> RoutePlan:
+    symbols = plan.stock_names or plan.stock_codes
+    query = "、".join(symbols) if symbols else message
+    return RoutePlan(
+        mode=ChatMode.COMPARE,
+        strategy=SkillStrategy.RESEARCH_EXPAND,
+        skills=[
+            _skill_plan(SKILL_WENCAI_MARKET_QUERY, f"{query} 对比 最新价 涨跌幅 成交额 换手率", "补充多只股票行情对比"),
+            _skill_plan(SKILL_WENCAI_FINANCIAL_QUERY, f"{query} 对比 PE PB ROE 营收 净利润", "补充多只股票财务和估值对比"),
+            _skill_plan(SKILL_SEARCH_REPORT, f"{query} 对比 研报", "补充多只股票研究观点"),
+        ],
+    )
+
+
+def _build_route_from_conversation_plan(
+    message: str,
+    plan: ConversationPlan,
+    profile: UserProfile,
+) -> RoutePlan:
+    subject = (plan.stock_names or plan.stock_codes or [None])[0]
+    entry_price_focus = _is_entry_price_question(message) or plan.workflow == "short_term_operation"
+    holding_context_focus = _is_holding_question(message)
+
+    if plan.workflow == "short_term_operation" and subject:
+        return _single_security_route(
+            subject,
+            ChatMode.SHORT_TERM,
+            entry_price_focus=True,
+            holding_context_focus=holding_context_focus,
+            need_chart=plan.need_chart,
+            chart_types=plan.chart_types,
+        )
+
+    if plan.workflow == "single_stock_deep_research" and subject:
+        if _is_capital_structure_question(message):
+            return _capital_structure_route(subject)
+        return _single_security_route(
+            subject,
+            ChatMode.MID_TERM_VALUE,
+            entry_price_focus=entry_price_focus,
+            holding_context_focus=holding_context_focus,
+            need_chart=plan.need_chart,
+            chart_types=plan.chart_types,
+        )
+
+    if plan.workflow == "stock_compare":
+        return _stock_compare_route(message, plan)
+
+    if plan.workflow == "market_or_sector_analysis":
+        return RoutePlan(
+            mode=ChatMode.GENERIC_DATA_QUERY,
+            strategy=SkillStrategy.SINGLE_SOURCE,
+            skills=[
+                _skill_plan(
+                    SKILL_WENCAI_INDUSTRY_QUERY if any(keyword in message for keyword in ("板块", "行业", "概念", "题材", "赛道")) else SKILL_WENCAI_MARKET_QUERY,
+                    message,
+                    "按原始问句补充行业、板块或市场分析",
+                )
+            ],
+        )
+
+    return build_route(message, _mode_from_conversation_plan(plan, message=message).mode, profile)
+
+
+def _is_capital_structure_question(message: str) -> bool:
+    text = re.sub(r"\s+", "", str(message or ""))
+    return any(
+        keyword in text
+        for keyword in (
+            "主力",
+            "散户",
+            "资金",
+            "筹码",
+            "股东户数",
+            "前十大股东",
+            "机构持仓",
+            "持仓变化",
+        )
+    )
+
+
+def _mode_from_conversation_plan(
+    plan: ConversationPlan,
+    *,
+    message: str,
+    mode_hint: Optional[ChatMode] = None,
+    session_mode: Optional[ChatMode] = None,
+) -> ModeDetection:
+    workflow = plan.workflow
+    if workflow == "short_term_operation":
+        return ModeDetection(ChatMode.SHORT_TERM, 0.96, "conversation_router")
+    if workflow == "single_stock_deep_research":
+        return ModeDetection(ChatMode.MID_TERM_VALUE, 0.96, "conversation_router")
+    if workflow == "stock_compare":
+        return ModeDetection(ChatMode.COMPARE, 0.96, "conversation_router")
+    if workflow in {"market_or_sector_analysis", "beginner_education", "ask_clarification", "safety_response"}:
+        return ModeDetection(ChatMode.GENERIC_DATA_QUERY, 0.94, "conversation_router")
+    return detect_mode(message, mode_hint=mode_hint, session_mode=session_mode)
+
+
+def plan_chat_route(
+    message: str,
+    *,
+    profile: UserProfile,
+    mode_hint: Optional[ChatMode] = None,
+    session_mode: Optional[ChatMode] = None,
+) -> tuple[ModeDetection, Optional[RoutePlan], str, ConversationPlan, Optional[StructuredResult]]:
+    conversation_plan = route_message(message)
+    detection = _mode_from_conversation_plan(
+        conversation_plan,
+        message=message,
+        mode_hint=mode_hint,
+        session_mode=session_mode,
+    )
+    direct_result = direct_response_for_plan(conversation_plan)
+    if direct_result is not None:
+        return detection, None, message, conversation_plan, direct_result
+    route = _build_route_from_conversation_plan(message, conversation_plan, profile)
+    return detection, route, message, conversation_plan, None
 
 
 def _find_value(row: Dict[str, Any], exact: Iterable[str], contains: Iterable[str]) -> Any:
@@ -1123,6 +1314,7 @@ def _local_theme_card(subject: Optional[str], theme: Optional[LocalThemeSnapshot
             "code": theme.code,
             "region": theme.region,
             "themes": theme.themes[:8],
+            "business": theme.business,
         },
     )
 
@@ -1175,6 +1367,33 @@ def _extract_text_metric(raw: Optional[Dict[str, Any]], *contains: str) -> Optio
         return "、".join(parts[:4]) if parts else None
     text = str(value).strip()
     return text or None
+
+
+def _normalize_taxonomy_text(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    normalized = (
+        text.replace("；", "、")
+        .replace("，", "、")
+        .replace(",", "、")
+        .replace("|", "、")
+        .replace("/", "、")
+    )
+    parts = [part.strip() for part in normalized.split("、") if part.strip()]
+    if len(parts) <= 1:
+        return text
+
+    deduped: List[str] = []
+    for part in parts:
+        if any(part == existing for existing in deduped):
+            continue
+        if any(part != existing and part in existing for existing in deduped):
+            continue
+        deduped = [existing for existing in deduped if not (existing != part and existing in part)]
+        deduped.append(part)
+    return "、".join(deduped[:6]) if deduped else text
 
 
 def _extract_change_by_span(
@@ -1371,10 +1590,34 @@ def _normalize_structured_result_output(result: StructuredResult) -> StructuredR
         summary=summary,
         table=result.table,
         cards=result.cards,
+        chart_config=result.chart_config,
         facts=facts,
         judgements=judgements,
         follow_ups=follow_ups,
         sources=result.sources,
+    )
+
+
+def _maybe_build_single_security_chart_config(
+    route: RoutePlan,
+    primary_raw_row: Optional[Dict[str, Any]],
+) -> Optional[ChartConfig]:
+    if not route.single_security or not route.need_chart:
+        return None
+
+    code = _extract_security_code_from_raw(primary_raw_row) or (
+        route.subject if route.subject and re.fullmatch(r"\d{6}(?:\.(?:SH|SZ|BJ))?", route.subject, re.IGNORECASE) else None
+    )
+    lookup = code or route.subject
+    if not lookup:
+        return None
+
+    bars = local_market_skill_client.fetch_daily_kline(lookup, limit=90)
+    chart_types = route.chart_types or ["kline", "volume", "ma5", "ma10", "ma20", "macd", "rsi"]
+    return build_chart_config(
+        subject=_extract_security_name_from_raw(primary_raw_row) or route.subject,
+        bars=bars[-60:],
+        chart_types=chart_types,
     )
 
 
@@ -1758,8 +2001,8 @@ def _fundamental_card(subject: str, raw: Optional[Dict[str, Any]]) -> Optional[R
         "销售毛利率",
         "资产负债率",
     )
-    industry = _extract_text_metric(raw, "所属同花顺行业", "所属行业")
-    concept = _extract_text_metric(raw, "所属概念", "涉及概念")
+    industry = _normalize_taxonomy_text(_extract_text_metric(raw, "所属同花顺行业", "所属行业"))
+    concept = _normalize_taxonomy_text(_extract_text_metric(raw, "所属概念", "涉及概念"))
     listing_board = _extract_text_metric(raw, "上市板块")
     listing_place = _extract_text_metric(raw, "上市地点")
 
@@ -1859,8 +2102,8 @@ def _multi_horizon_analysis_card(
     observe_high: Optional[float],
 ) -> ResultCard:
     snapshot = _extract_technical_snapshot(raw)
-    industry = _extract_text_metric(raw, "所属同花顺行业", "所属行业")
-    concept = _extract_text_metric(raw, "所属概念", "涉及概念")
+    industry = _normalize_taxonomy_text(_extract_text_metric(raw, "所属同花顺行业", "所属行业"))
+    concept = _normalize_taxonomy_text(_extract_text_metric(raw, "所属概念", "涉及概念"))
     report_period = _extract_latest_metric_date(
         raw,
         "净资产收益率",
@@ -2056,8 +2299,8 @@ def _single_security_summary(
     turnover = snapshot.turnover
     money_flow = snapshot.money_flow
     money_flow_text = _format_money_flow(snapshot.money_flow)
-    industry = _extract_text_metric(raw, "所属同花顺行业", "所属行业")
-    concept = _extract_text_metric(raw, "所属概念", "涉及概念")
+    industry = _normalize_taxonomy_text(_extract_text_metric(raw, "所属同花顺行业", "所属行业"))
+    concept = _normalize_taxonomy_text(_extract_text_metric(raw, "所属概念", "涉及概念"))
     listing_board = _extract_text_metric(raw, "上市板块")
     listing_place = _extract_text_metric(raw, "上市地点")
     report_period = _extract_latest_metric_date(
@@ -2484,6 +2727,7 @@ def _apply_gpt_enhancement(
         summary=result.summary if route.single_security else (enhancement.summary or result.summary),
         table=result.table,
         cards=cards,
+        chart_config=result.chart_config,
         facts=result.facts,
         judgements=enhancement.judgements or result.judgements,
         follow_ups=enhancement.follow_ups or result.follow_ups,
@@ -2545,6 +2789,10 @@ def _execute_plan_core(
     profile: UserProfile,
     user_message: str = "",
 ) -> tuple[StructuredResult, List[SkillUsage], str, Optional[UserVisibleError]]:
+    preflight_result = preflight_single_stock_research(user_message)
+    if preflight_result is not None:
+        return _normalize_structured_result_output(preflight_result), [], user_message, None
+
     limit = profile.default_result_size or 5
     skills_used: List[SkillUsage] = []
     sources: List[SourceRef] = []
@@ -2562,6 +2810,7 @@ def _execute_plan_core(
     user_visible_error: Optional[UserVisibleError] = None
     holding_context: Optional[SimTradingHoldingContext] = None
     local_market = LocalMarketContext()
+    chart_config: Optional[ChartConfig] = None
     used_wencai_source = False
     used_local_market_source = False
 
@@ -2823,6 +3072,28 @@ def _execute_plan_core(
         source_facts.append("单股实时补充来自同花顺公开行情页、盘口接口和题材页。")
     facts = source_facts + facts
 
+    if route.single_security and route.need_chart:
+        try:
+            chart_config = _maybe_build_single_security_chart_config(route, primary_raw_row)
+            if chart_config is not None:
+                sources.append(SourceRef(skill="K线图", query=route.subject or "single_security_chart"))
+            else:
+                judgements.append(_chart_unavailable_judgement(facts, judgements))
+        except LocalMarketSkillError:
+            judgements.append(_chart_unavailable_judgement(facts, judgements))
+        except Exception:
+            logger.exception("Single-security chart build failed")
+            judgements.append(_chart_unavailable_judgement(facts, judgements))
+
+    if route.single_security and route.need_chart and chart_config is None:
+        cards.append(
+            ResultCard(
+                type=CardType.CUSTOM,
+                title="技术图表状态",
+                content="当前未能拉取到可视化所需的 K 线 / 指标序列，因此这次没有显示技术图表卡片；文字里的短线判断只基于已返回的行情快照、技术指标和资金信息。",
+            )
+        )
+
     risk_content = "以上为基于同花顺问财数据的辅助筛选和规则化整理，不构成投资建议。"
     if used_wencai_source and used_local_market_source:
         risk_content = "以上为基于同花顺问财与同花顺公开行情页补充的辅助整理，不构成投资建议。"
@@ -2840,12 +3111,53 @@ def _execute_plan_core(
         summary=summary,
         table=primary_table,
         cards=cards,
+        chart_config=chart_config,
         facts=facts,
         judgements=judgements,
         follow_ups=follow_ups,
         sources=sources,
     ))
+    structured = _normalize_structured_result_output(
+        enhance_single_stock_research(route, structured, user_message=user_message)
+    )
+    structured = _normalize_structured_result_output(
+        enhance_single_stock_capital(route, structured, user_message=user_message)
+    )
+    structured = _normalize_structured_result_output(
+        enhance_single_stock_value(route, structured, user_message=user_message)
+    )
+    structured = _normalize_structured_result_output(
+        enhance_single_stock_long_term(route, structured, user_message=user_message)
+    )
+    structured = _normalize_structured_result_output(
+        enhance_short_term_operation(route, structured, user_message=user_message)
+    )
+    if route.single_security and route.need_chart and structured.chart_config is None:
+        combined_text = structured.summary + "\n" + "\n".join(structured.judgements)
+        chart_judgement = _chart_unavailable_judgement(structured.facts, structured.judgements)
+        if chart_judgement not in combined_text:
+            structured = _normalize_structured_result_output(
+                StructuredResult(
+                    summary=f"{structured.summary}\n\n{chart_judgement}",
+                    table=structured.table,
+                    cards=structured.cards,
+                    chart_config=structured.chart_config,
+                    facts=structured.facts,
+                    judgements=structured.judgements,
+                    follow_ups=structured.follow_ups,
+                    sources=structured.sources,
+                )
+            )
     return structured, skills_used, primary_query, user_visible_error
+
+
+def _chart_unavailable_judgement(facts: Iterable[str], judgements: Iterable[str]) -> str:
+    text = "\n".join(str(item or "") for item in [*facts, *judgements])
+    has_text_kline = any(marker in text for marker in ("今日 K 线", "今日K线", "K 线：", "K线：", "日K开"))
+    has_text_indicator = any(marker in text for marker in ("MA5", "MA10", "MA20", "MACD", "RSI", "KDJ", "布林"))
+    if has_text_kline or has_text_indicator:
+        return MISSING_VISUAL_CHART_JUDGEMENT
+    return MISSING_CHART_JUDGEMENT
 
 
 def _enhance_result_with_llm(
@@ -3404,37 +3716,31 @@ def plan_follow_up_route(
     *,
     session_mode: Optional[ChatMode],
     profile: UserProfile,
-) -> tuple[ModeDetection, RoutePlan, str]:
+) -> tuple[ModeDetection, Optional[RoutePlan], str, Optional[StructuredResult]]:
     contextual_message = rewrite_follow_up_message(message, parent_message)
+    snapshot = parent_message.result_snapshot if parent_message is not None else None
+    subject = _snapshot_subject(snapshot) if _looks_like_single_security_snapshot(snapshot) else None
     parent_mode = (
         parent_message.mode
         if parent_message is not None and parent_message.mode not in {ChatMode.COMPARE, ChatMode.FOLLOW_UP}
         else None
     )
     effective_session_mode = parent_mode or session_mode
-    detection = detect_mode(contextual_message, session_mode=effective_session_mode)
+    conversation_plan = route_message(
+        contextual_message,
+        context_stock_names=[subject] if subject else None,
+    )
+    detection = _mode_from_conversation_plan(
+        conversation_plan,
+        message=contextual_message,
+        session_mode=effective_session_mode,
+    )
+    direct_result = direct_response_for_plan(conversation_plan)
+    if direct_result is not None:
+        return detection, None, contextual_message, direct_result
 
-    if detection.mode in {ChatMode.COMPARE, ChatMode.FOLLOW_UP}:
-        fallback_mode = effective_session_mode or ChatMode.GENERIC_DATA_QUERY
-        detection = ModeDetection(
-            mode=fallback_mode,
-            confidence=detection.confidence,
-            source=f"{detection.source}_follow_up_context",
-        )
-
-    snapshot = parent_message.result_snapshot if parent_message is not None else None
-    subject = _snapshot_subject(snapshot) if _looks_like_single_security_snapshot(snapshot) else None
-    if subject and detection.mode in {ChatMode.SHORT_TERM, ChatMode.SWING, ChatMode.MID_TERM_VALUE}:
-        route = _single_security_route(
-            subject,
-            detection.mode,
-            entry_price_focus=_is_entry_price_question(contextual_message),
-            holding_context_focus=_is_holding_question(contextual_message),
-        )
-        return detection, route, contextual_message
-
-    route = build_route(contextual_message, detection.mode, profile)
-    return detection, route, contextual_message
+    route = _build_route_from_conversation_plan(contextual_message, conversation_plan, profile)
+    return detection, route, contextual_message, None
 
 
 def result_to_chat_response(
@@ -3455,6 +3761,7 @@ def result_to_chat_response(
         summary=result.summary,
         table=result.table,
         cards=result.cards,
+        chart_config=result.chart_config,
         facts=result.facts,
         judgements=result.judgements,
         follow_ups=result.follow_ups,
